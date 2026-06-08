@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+data/pdfs/
+data/transcripts/
+output/
+vector_store/
+.DS_Store
+.claude/

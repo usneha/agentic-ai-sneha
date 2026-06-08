@@ -1,0 +1,61 @@
+weeks:
+  0:
+    title: "Pre-Read"
+    topics:
+      - "How AI is trained"
+      - "Neural network & backpropagation"
+      - "Prompt engineering"
+      - "Tokenization"
+      - "Transformer Architecture"
+      - "The Agentic AI Field Guide"
+      - "Frontier Models"
+      - "Multimodal AI"
+    readings:
+      - "Attention is all you need: https://arxiv.org/pdf/1706.03762"
+      - "The Illustrated Transformer: http://jalammar.github.io/illustrated-transformer/"
+      # - "The Agentic AI Field Guide: https://agenticai.substack.com/p/agentic-ai-field-guide"
+      # - "Frontier Models: https://www.frontiermodels.com/"
+      # - "Multimodal AI: https://arxiv.org/abs/2206.04615"  
+
+  1:
+    title: "Generative AI building blocks"
+    topics:
+      - "How LLMs work: tokens, embeddings, and attention"
+      - "Context windows and their real-world implications"
+      - "Function calling and structured outputs"
+      - "The model landscape: closed and open-source"
+      - "LM Arena, OpenRouter, Hugging Face - when to use what"
+      - "Latency budgets, cost controls, reliability basics"
+      - "Prompt fundamentals: zero-shot, few-shot, chain-of-thought"
+      - "Multi-modal AI: text, image, audio - a practical overview"
+    readings:
+      - "Prompt engeering fundamentals - Claude: https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview"
+      # - "How LLMs work: https://www.youtube.com/watch?v=U9tTjZgXqjY"
+      # - "Context windows: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=15m30s"
+      # - "Function calling: https://platform.openai.com/docs/guides/gpt/function-calling"
+      # - "Model landscape: https://www.frontiermodels.com/"
+      # - "LM Arena: https://lmarena.com/"
+      # - "OpenRouter: https://openrouter.ai/"
+      # - "Hugging Face: https://huggingface.co/"
+      # - "Prompt fundamentals: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=30m45s"
+      # - "Multi-modal AI: https://arxiv.org/abs/2206.04615"  
+
+  2:
+    title: "Grounding AI with RAG & Context Engineering"
+    topics:
+      - "Why prompting alone isn't enough for enterprise applications"
+      - "Context engineering: beyond simple prompts"
+      - "Vector databases: what they are and why they matter"
+      - "Chunking, embedding & retrieval strategies"
+      - "Reranking and hybrid search for precision"
+      - "RAG pipeline architecture: naive vs. advanced patterns"
+      - "Evaluating retrieval quality"
+      - "GraphRAG and structured data retrieval"
+    readings:
+      # - "Context engineering: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=45m10s"
+      # - "Vector databases: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=50m20s"
+      # - "Chunking, embedding & retrieval strategies: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=55m5s"
+      # - "Reranking and hybrid search: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=1h5m30s"
+      # - "RAG pipeline architecture: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=1h15m45s"
+      # - "Evaluating retrieval quality: https://www.youtube.com/watch?v=U9tTjZgXqjY&t=1h25m10s"
+      # - "GraphRAG and structured data retrieval: https://arxiv.org/abs/2211.13227"
