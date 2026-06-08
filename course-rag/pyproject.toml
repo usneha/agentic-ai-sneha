@@ -1,0 +1,34 @@
+[project]
+name = "course-rag"
+version = "0.1.0"
+description = "RAG system for Mastering Agentic AI course material"
+requires-python = ">=3.9"
+dependencies = [
+    # Stage 1 — Preprocessing
+    "langchain>=0.3",
+    "langchain-community>=0.3",
+    "langchain-text-splitters>=0.3",
+    "pdfplumber>=0.11",
+    "pypdf>=4.0",
+    "trafilatura>=1.12",
+    "lxml-html-clean>=0.4",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+embeddings = [
+    # Stage 2 — Chunking & Embeddings
+    "langchain-openai>=0.2",
+    "langchain-huggingface>=0.1",
+    "sentence-transformers>=3.0",
+    "chromadb>=0.5",
+]
+chat = [
+    # Stage 3 — Generation & UI
+    "langchain-anthropic>=0.3",
+    "anthropic>=0.40",
+    "streamlit>=1.40",
+]
+
+[tool.uv]
+package = false
