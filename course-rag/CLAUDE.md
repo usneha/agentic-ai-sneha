@@ -20,6 +20,7 @@
 
 ## Unresolved / Not started
 
+- **Image OCR / vision captions for `Week 2- Session 2.pdf`** — only 7 chunks from 28 pages, likely mostly diagrams/images that PDFPlumber skips. Future: use a vision model or OCR (e.g. `pytesseract`, `pdf2image`, or Claude vision) to extract text from slide images and add as additional documents.
 - **`.md` file loader** — user mentioned `.md` notes files but was cut off. Need to ask: where are they, what do they contain? Then add `1_preprocessing/loaders/markdown_loader.py`, `source_type: "markdown"`, integrate into `preprocess.py`.
 - **`data/transcripts/`** — empty; no Zoom files added yet. Loader is ready.
 - **Stage 2** — waiting on OpenAI API credits for `text-embedding-3-small`. `splitter.py` is ready. Need `2_embeddings/embed.py`: reads `output/documents.json` → splits → embeds → writes Chroma to `vector_store/`. HuggingFace `all-MiniLM-L6-v2` available as free fallback.
