@@ -22,10 +22,18 @@ _TRANSCRIPT_SPLITTER = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 
+# Chapter docs are semantically coherent — use larger chunks, split on speaker turns
+_TRANSCRIPT_CHAPTER_SPLITTER = RecursiveCharacterTextSplitter(
+    chunk_size=1500,
+    chunk_overlap=200,
+    separators=["\n\n", "\n", ". ", " ", ""],
+)
+
 _SPLITTER_MAP = {
     "pdf": _PDF_SPLITTER,
     "web": _WEB_SPLITTER,
     "transcript": _TRANSCRIPT_SPLITTER,
+    "transcript_chapter": _TRANSCRIPT_CHAPTER_SPLITTER,
 }
 
 _FALLBACK_SPLITTER = RecursiveCharacterTextSplitter(

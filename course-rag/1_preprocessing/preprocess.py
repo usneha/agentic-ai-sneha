@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from cleaner import clean_documents
 from loaders.pdf_loader import load_pdfs
-from loaders.transcript_loader import load_transcripts
+from loaders.transcript_chapter_loader import load_transcript_chapters
 from loaders.web_loader import load_from_course_structure
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -48,9 +48,9 @@ def preprocess():
     validate_loader_output(pdf_docs, "pdf")
     all_docs.extend(pdf_docs)
 
-    print("\n🎙️  Loading transcripts...")
-    transcript_docs = load_transcripts(DATA_DIR / "transcripts")
-    validate_loader_output(transcript_docs, "transcript")
+    print("\n🎙️  Loading transcripts (chapter-segmented)...")
+    transcript_docs = load_transcript_chapters()
+    validate_loader_output(transcript_docs, "transcript_chapter")
     all_docs.extend(transcript_docs)
 
     print("\n🌐 Loading web readings...")
