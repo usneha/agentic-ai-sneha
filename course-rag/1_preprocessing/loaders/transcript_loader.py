@@ -71,6 +71,44 @@ def _parse_bracketed(text: str, source_name: str) -> list[Document]:
     return docs
 
 
+def _parse_speaker_block(text: str, source_name: str) -> list[Document]:
+    """Parse transcripts where a speaker name appears alone on its own line."""
+    docs = []
+    speaker_pattern = re.compile(r"^([A-Z][a-zA-Z'-]+(?: [A-Z][a-zA-Z'-]+){1,3})\s*$")
+    current_speaker: str | None = None
+    current_lines: list[str] = []
+
+    for line in text.splitlines():
+        if speaker_pattern.match(line):
+            if current_speaker and current_lines:
+                utterance = " ".join(current_lines)
+                docs.append(Document(
+                    page_content=utterance,
+                    metadata={
+                        "source_type": "transcript",
+                        "source_name": source_name,
+                        "speaker": current_speaker,
+                    },
+                ))
+            current_speaker = line.strip()
+            current_lines = []
+        else:
+            stripped = line.strip()
+            if stripped:
+                current_lines.append(stripped)
+
+    if current_speaker and current_lines:
+        docs.append(Document(
+            page_content=" ".join(current_lines),
+            metadata={
+                "source_type": "transcript",
+                "source_name": source_name,
+                "speaker": current_speaker,
+            },
+        ))
+    return docs
+
+
 def _parse_plain(text: str, source_name: str) -> list[Document]:
     """Parse plain-text Zoom transcript (Speaker HH:MM:SS\\nText)."""
     docs = []
@@ -139,6 +177,8 @@ def load_transcripts(transcript_dir: str | Path) -> list[Document]:
             raw = _parse_vtt(text, path.name)
         elif re.search(r"^\[[^\]]+\]\s+\d{1,2}:\d{2}:\d{2}", text, re.MULTILINE):
             raw = _parse_bracketed(text, path.name)
+        elif re.search(r"^[A-Z][a-zA-Z'-]+(?: [A-Z][a-zA-Z'-]+){1,3}\s*$", text, re.MULTILINE):
+            raw = _parse_speaker_block(text, path.name)
         else:
             raw = _parse_plain(text, path.name)
         merged = _merge_short_turns(raw)
