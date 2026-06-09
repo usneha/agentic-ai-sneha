@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from cleaner import clean_documents
 from loaders.pdf_loader import load_pdfs
 from loaders.transcript_loader import load_transcripts
 from loaders.web_loader import load_from_course_structure
@@ -62,14 +63,20 @@ def preprocess():
         return
 
     output = [{"content": d.page_content, "metadata": d.metadata} for d in all_docs]
+
+    print("\n🧹 Cleaning documents...")
+    before = len(output)
+    output = clean_documents(output)
+    print(f"   → {before - len(output)} filtered, {len(output)} remaining")
+
     out_path = OUTPUT_DIR / "documents.json"
     out_path.write_text(json.dumps(output, indent=2, ensure_ascii=False))
 
-    print(f"\n✅ {len(all_docs)} documents saved to {out_path}")
+    print(f"\n✅ {len(output)} documents saved to {out_path}")
     print("\nDocuments by source type:")
     by_type: dict[str, int] = {}
-    for d in all_docs:
-        t = d.metadata.get("source_type", "unknown")
+    for d in output:
+        t = d["metadata"].get("source_type", "unknown")
         by_type[t] = by_type.get(t, 0) + 1
     for t, n in sorted(by_type.items()):
         print(f"   {t}: {n}")
