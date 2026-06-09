@@ -17,8 +17,8 @@ _WEB_SPLITTER = RecursiveCharacterTextSplitter(
 
 # Transcript utterances are already natural speech units; only split very long ones
 _TRANSCRIPT_SPLITTER = RecursiveCharacterTextSplitter(
-    chunk_size=600,
-    chunk_overlap=50,
+    chunk_size=900,
+    chunk_overlap=120,
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 
@@ -28,6 +28,12 @@ _SPLITTER_MAP = {
     "transcript": _TRANSCRIPT_SPLITTER,
 }
 
+_FALLBACK_SPLITTER = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=150,
+    separators=["\n\n", "\n", ". ", " ", ""],
+)
+
 
 def split_documents(docs: list[Document]) -> list[Document]:
     chunks = []
@@ -35,4 +41,11 @@ def split_documents(docs: list[Document]) -> list[Document]:
         subset = [d for d in docs if d.metadata.get("source_type") == source_type]
         if subset:
             chunks.extend(splitter.split_documents(subset))
+
+    unknown = [d for d in docs if d.metadata.get("source_type") not in _SPLITTER_MAP]
+    if unknown:
+        types = {d.metadata.get("source_type") for d in unknown}
+        print(f"  ⚠️  Unknown source_type(s) {types} — using fallback splitter for {len(unknown)} docs")
+        chunks.extend(_FALLBACK_SPLITTER.split_documents(unknown))
+
     return chunks
