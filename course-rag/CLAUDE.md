@@ -35,9 +35,10 @@
 
 - `3_embeddings/embedder_config.py` — `get_embeddings()` factory; reads `EMBEDDING_PROVIDER` env var
 - `3_embeddings/run_embeddings.py` — reads `output/chunks.json` → embeds → persists Chroma to `vector_store/`
-- Current provider: **HuggingFace `all-MiniLM-L6-v2`** (local, no API key)
-- To swap to OpenAI: set `EMBEDDING_PROVIDER=openai` and `OPENAI_API_KEY=sk-...` in `.env`, re-run
-- Last run: **772 vectors** in ~4-7s; collection `course_rag` at `vector_store/`
+- Current provider: **OpenAI `text-embedding-3-small`** (`EMBEDDING_PROVIDER=openai` + `OPENAI_API_KEY` in `.env`)
+- To swap back to local: set `EMBEDDING_PROVIDER=huggingface` in `.env`, re-run (uses `all-MiniLM-L6-v2`)
+- Last run: **772 vectors** in ~4s; collection `course_rag` at `vector_store/`
+- Fixes the `all-MiniLM-L6-v2` truncation issue: that model's effective `max_seq_length` is 256 tokens and silently truncated 521/772 chunks (67%, max chunk = 453 tokens); `text-embedding-3-small`'s 8191-token limit means no chunk is truncated
 - ⚠️ Protobuf fix: `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python` must be set before chromadb imports; hardcoded via `os.environ.setdefault` at top of `run_embeddings.py`; also in `.env`
 
 ## Stage 4 — Retrieval
@@ -56,11 +57,10 @@
 - **Stage 5 — Chat UI** — Streamlit conversational UI. Use `claude-sonnet-4-6` (or `claude-opus-4-8`) via `langchain-anthropic`. **No sidebar filters** — clean chat only. Inline source citations as collapsible expander. Run: `uv sync --extra chat` first.
 - **Image OCR / vision captions for `Week 2- Session 2.pdf`** — only 1 chunk retrieved across the full eval set, likely mostly diagrams. Future: `pytesseract` / `pdf2image` / Claude vision to extract slide images as additional documents.
 - **`.md` file loader** — user mentioned `.md` notes files. Need to ask: where are they? Then add `1_preprocessing/loaders/markdown_loader.py`, `source_type: "markdown"`, integrate into `preprocess.py`.
-- **OpenAI embeddings** — credits pending. When ready: set `EMBEDDING_PROVIDER=openai` + `OPENAI_API_KEY` in `.env`, re-run Stage 3, rebuild vector store, re-run Stage 4 smoke test.
+- **Re-run retrieval/RAG eval against OpenAI embeddings** — `output/retrieval_eval.json` / `rag_eval.json` / `retrieval_comparison.csv` were generated with the HuggingFace embeddings; results will shift now that Stage 3 uses `text-embedding-3-small`. Re-run `run_eval.py` / `run_rag_eval.py` / `build_comparison_csv.py` when needed (note: this overwrites those files — back up first if comparing against the prior run).
 
 ---
 
 ## Next steps in order
 
 1. Build `5_chat/` — Streamlit chatbot with Claude, clean chat UI, collapsible source citations
-2. When OpenAI credits arrive — swap embedding provider and rebuild vector store
