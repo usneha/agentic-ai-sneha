@@ -23,13 +23,20 @@ from langchain_chroma import Chroma
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
+from rank_bm25 import BM25Okapi
 
+from bm25_normalizer import normalize_for_bm25
 from embedder_config import get_embeddings
 
 VECTOR_STORE_DIR = Path(__file__).parent.parent / "vector_store"
 CHUNKS_PATH = Path(__file__).parent.parent / "output" / "chunks.json"
+BM25_CHUNKS_PATH = Path(__file__).parent.parent / "output" / "chunks_bm25.json"
 COLLECTION_NAME = "course_rag"
 RRF_K = 60  # standard RRF constant
+
+
+def _bm25_preprocess_func(text: str) -> List[str]:
+    return normalize_for_bm25(text).split()
 
 
 def get_vector_store() -> Chroma:
@@ -53,10 +60,30 @@ def _load_chunks() -> List[Document]:
     return [Document(page_content=c["content"], metadata=c["metadata"]) for c in raw]
 
 
+def _load_bm25_chunks() -> List[Document]:
+    """Same chunks as _load_chunks(), with metadata.normalized_text added for BM25 indexing."""
+    with open(BM25_CHUNKS_PATH) as f:
+        raw = json.load(f)
+    return [Document(page_content=c["content"], metadata=c["metadata"]) for c in raw]
+
+
 def get_bm25_retriever(k: int = 5) -> BM25Retriever:
-    retriever = BM25Retriever.from_documents(_load_chunks())
-    retriever.k = k
-    return retriever
+    docs = _load_bm25_chunks()
+    corpus = [_bm25_preprocess_func(doc.metadata["normalized_text"]) for doc in docs]
+    return BM25Retriever(
+        vectorizer=BM25Okapi(corpus),
+        docs=docs,
+        preprocess_func=_bm25_preprocess_func,
+        k=k,
+    )
+
+
+def get_bm25_results_with_scores(query: str, k: int = 5) -> List[Tuple[Document, float]]:
+    """Returns up to k (doc, bm25_score) pairs, sorted by score descending."""
+    retriever = get_bm25_retriever()
+    scores = retriever.vectorizer.get_scores(retriever.preprocess_func(query))
+    scored = sorted(zip(retriever.docs, scores), key=lambda x: x[1], reverse=True)
+    return [(doc, float(score)) for doc, score in scored[:k]]
 
 
 def hybrid_search(
