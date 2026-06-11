@@ -12,7 +12,7 @@
 | 2 — Chunk | `2_chunking/` | ✅ complete | `uv run python 2_chunking/run_chunking.py` |
 | 3 — Embed | `3_embeddings/` | ✅ complete | `uv run python 3_embeddings/run_embeddings.py` |
 | 4 — Retrieve | `4_retrieval/` | ✅ complete | `uv run python 4_retrieval/run_retrieval.py` |
-| 5 — Chat UI | `5_chat/` | ⬜ not started | — |
+| 5 — Chat UI | `5_chat/` | ✅ complete | `uv run python 5_chat/run_app.py` |
 
 ---
 
@@ -68,11 +68,18 @@
   - `bm25` scores `answer_relevancy=0.0` for "What components do agentic AI systems need?" despite `faithfulness=1.0, context_recall=1.0` — same noncommittal-hedge pattern as Q4 (bm25 also misses the relevant chunk and hedges into "cannot provide a definitive answer" for this question), not a separate anomaly.
 - **`build_comparison_csv.py` refreshed for 4 methods (2026-06-10)**: added a `rewritten_reranked` entry + updated `winner`/`why` for all 10 questions in `ANALYSIS`, incorporating the RAGAS scores above for the 5 `SAMPLE_QUERIES`. `output/retrieval_comparison.csv` now has a `Rewritten+Reranked` column (7 columns total); old 3-method version backed up as `output/retrieval_comparison_3method.csv`. Headlines: `rewritten_reranked` is now sole/joint winner on Q2 (adds the previously-missing Query/Key/Value attention detail) and Q4 (resolves the hedge); ties with semantic on the 4 `HYBRID_EDGE_CASES` proper-noun/BM25-failure questions (Q6-8, Q10) by retrieving the same key chunks via the rewritten query; the one regression is Q3 ("How do prompts influence model behavior?"), where the rewritten query drifts toward "agent" framing and misses the prompt-engineering chunks (RAGAS answer_relevancy 0.79, lowest of the four) — semantic remains the winner there.
 
+## Stage 5 — Chat UI
+
+- `5_chat/generator.py` — `generate(query, k=5)` → `(answer, results)`; retrieval via `hybrid_search_rewritten_reranked()` (per RAGAS recommendation), generation via `gpt-4o-mini` (chosen over `langchain-anthropic` since no Anthropic API key is configured). `results: List[Tuple[Document, origin_str, rerank_score, sem_score]]`.
+- `5_chat/app.py` — Streamlit chat UI: clean chat (no sidebar filters), inline `[Source N]` citations in the answer, collapsible "Sources" expander showing source name/page/speaker + content preview per chunk.
+- `5_chat/run_app.py` — **launcher, use this instead of `streamlit run app.py`**. `streamlit run` imports streamlit (and its protobuf-based deps via chromadb's opentelemetry exporter) before the app script runs, so `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python` set inside `app.py` is too late and causes `TypeError: Descriptors cannot be created directly`. `run_app.py` sets the env var first, then invokes `streamlit.web.cli`.
+- `5_chat/run_chat.py` — CLI smoke-test harness for the generator (unchanged behavior, updated source-print labels for the rerank-based `results` tuple).
+- Run: `uv run python 5_chat/run_app.py` (requires `uv sync --extra chat` first if not already synced). Confirmed working end-to-end by the user (2026-06-10).
+
 ---
 
 ## Unresolved / Not started
 
-- **Stage 5 — Chat UI** — Streamlit conversational UI. Use `claude-sonnet-4-6` (or `claude-opus-4-8`) via `langchain-anthropic`. **No sidebar filters** — clean chat only. Inline source citations as collapsible expander. Run: `uv sync --extra chat` first.
 - **Image OCR / vision captions for `Week 2- Session 2.pdf`** — only 1 chunk retrieved across the full eval set, likely mostly diagrams. Future: `pytesseract` / `pdf2image` / Claude vision to extract slide images as additional documents.
 - **`.md` file loader** — user mentioned `.md` notes files. Need to ask: where are they? Then add `1_preprocessing/loaders/markdown_loader.py`, `source_type: "markdown"`, integrate into `preprocess.py`.
 
@@ -81,4 +88,3 @@
 ## Next steps in order
 
 1. **RAGAS — decide whether to extend coverage**: current `output/ragas_eval.json`/`ragas_summary.csv` cover only 5/10 questions (`SAMPLE_QUERIES`) and 3/4 metrics (`context_precision` dropped for speed). `rewritten_reranked` already wins decisively on all 3 scored metrics. Optionally: (a) run the remaining 5 `HYBRID_EDGE_CASES` questions, and/or (b) add `context_precision` back — `run_ragas_eval.py`'s resume logic means this can be done incrementally without re-scoring existing records.
-2. Build `5_chat/` — Streamlit chatbot with Claude, clean chat UI, collapsible source citations. Given the RAGAS results, consider using `hybrid_search_rewritten_reranked()` as the retrieval method.

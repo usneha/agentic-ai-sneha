@@ -20,7 +20,7 @@ from generator import generate
 
 def _print_sources(results):
     print("\nSources:")
-    for i, (doc, origin, rrf, sem_score) in enumerate(results, 1):
+    for i, (doc, origin, rerank_score, sem_score) in enumerate(results, 1):
         meta = doc.metadata
         label = meta.get("source_name", "unknown")
         parts = [f"  {i}. {label}"]
@@ -30,7 +30,7 @@ def _print_sources(results):
             parts.append(meta["speaker"])
         parts.append(f"[{meta.get('source_type', '')}]")
         parts.append(f"origin={origin}")
-        parts.append(f"rrf={rrf:.4f}")
+        parts.append(f"rerank={rerank_score:.4f}")
         sem_str = f"{sem_score:.4f} (lower=better)" if sem_score is not None else "n/a"
         parts.append(f"semantic_distance={sem_str}")
         print("  ·  ".join(parts))
