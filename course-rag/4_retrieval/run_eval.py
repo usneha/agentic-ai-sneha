@@ -10,17 +10,23 @@ Writes results to output/retrieval_eval.json
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from reranker_config import hybrid_search_rewritten_reranked
 from retriever_config import get_bm25_results_with_scores, get_vector_store, hybrid_search
 from run_retrieval import HYBRID_EDGE_CASES, SAMPLE_QUERIES
 
 QUESTIONS = SAMPLE_QUERIES + [query for query, _label in HYBRID_EDGE_CASES]
 K = 5
 OUTPUT_PATH = Path(__file__).parent.parent / "output" / "retrieval_eval.json"
+
+# Opt-in: also run a rewrite_query() + cross-encoder-reranked method.
+# Default (unset) keeps output identical to the existing 3-method eval.
+ENABLE_REWRITE_RERANK = os.getenv("ENABLE_REWRITE_RERANK", "false").lower() == "true"
 
 
 def _record(question, method, rank, score, doc, origin=None):
@@ -64,10 +70,17 @@ def run_eval():
         ):
             results.append(_record(question, "hybrid", rank, rrf, doc, origin=origin))
 
+        if ENABLE_REWRITE_RERANK:
+            for rank, (doc, origin, score, _sem_score) in enumerate(
+                hybrid_search_rewritten_reranked(question, k=K), 1
+            ):
+                results.append(_record(question, "rewritten_reranked", rank, score, doc, origin=origin))
+
+    n_methods = 4 if ENABLE_REWRITE_RERANK else 3
     OUTPUT_PATH.write_text(json.dumps(results, indent=2))
     print(
         f"Wrote {len(results)} records "
-        f"({len(QUESTIONS)} questions x 3 methods x k={K}) to {OUTPUT_PATH}"
+        f"({len(QUESTIONS)} questions x {n_methods} methods x k={K}) to {OUTPUT_PATH}"
     )
 
 
