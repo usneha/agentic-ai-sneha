@@ -54,3 +54,26 @@ def rewrite_query(question: str) -> str:
         ]
     )
     return response.content.strip()
+
+
+CONTEXTUALIZE_SYSTEM_PROMPT = (
+    "Given the conversation so far and a new user message, rewrite the new "
+    "message as a standalone question that includes any context (topics, "
+    "entities, acronyms) needed to understand it without the conversation. "
+    "If it is already standalone, return it unchanged. "
+    "Output only the rewritten question, with no explanation."
+)
+
+
+def contextualize_query(history: list[dict], question: str) -> str:
+    """Resolve pronouns/implicit references in a follow-up question using
+    prior conversation turns, producing a standalone question for retrieval."""
+    if not history:
+        return question
+
+    messages = [("system", CONTEXTUALIZE_SYSTEM_PROMPT)]
+    messages += [(m["role"], m["content"]) for m in history]
+    messages.append(("user", question))
+
+    response = _get_llm().invoke(messages)
+    return response.content.strip()

@@ -45,6 +45,7 @@ def main():
     args = parser.parse_args()
 
     k = args.k
+    history = []
     print(f"Course RAG — gpt-4o-mini  (k={k})")
     print("Commands: /k <n> to change k, /quit to exit\n")
 
@@ -68,9 +69,12 @@ def main():
             continue
 
         print()
-        answer, results = generate(query, k=k)
+        answer, results = generate(query, history=history, k=k)
         print(f"Answer:\n{answer}\n")
         _print_sources(results)
+
+        history.append({"role": "user", "content": query})
+        history.append({"role": "assistant", "content": answer})
 
 
 if __name__ == "__main__":
