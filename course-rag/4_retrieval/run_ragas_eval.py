@@ -28,8 +28,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 load_dotenv()
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
+# Keep eval-script LangSmith traces separate from live chat traces
+os.environ["LANGCHAIN_PROJECT"] = "course-rag-eval"
+
 from openai import AsyncOpenAI
 
+from langsmith.wrappers import wrap_openai
 from ragas.embeddings import OpenAIEmbeddings
 from ragas.llms import llm_factory
 from ragas.metrics.collections import AnswerRelevancy, ContextRecall, Faithfulness
@@ -112,7 +116,7 @@ async def main():
     print(f"{len(done)} records already scored, {len(todo)} remaining", flush=True)
 
     if todo:
-        client = AsyncOpenAI()
+        client = wrap_openai(AsyncOpenAI())
         llm = llm_factory(JUDGE_MODEL, client=client)
         embeddings = OpenAIEmbeddings(client=client, model=EMBEDDING_MODEL)
         metrics = (
