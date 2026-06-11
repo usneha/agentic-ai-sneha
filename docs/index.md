@@ -32,6 +32,90 @@ every answer is traceable back to a specific slide or transcript chapter.
 
 ---
 
+## Architecture
+
+End-to-end view: an **offline indexing pipeline** builds the knowledge base,
+an **online query pipeline** serves chat requests, an **evaluation harness**
+compares retrieval strategies, and **LangSmith** provides observability
+across both.
+
+<div class="mermaid">
+flowchart TB
+    subgraph SOURCES["Data Sources"]
+        PDFS[("Lecture PDFs")]
+        TRANS[("Zoom Transcripts")]
+        URLS[("Reference URLs")]
+    end
+
+    subgraph INDEXING["Offline Indexing Pipeline"]
+        direction TB
+        PRE["Stage 1 — Preprocess<br/>loaders + cleaner.py<br/>→ documents.json (208 docs)"]
+        CHUNK["Stage 2 — Chunk<br/>source-aware splitters<br/>→ chunks.json (772 chunks)"]
+        BM25BUILD["build_bm25_chunks.py<br/>normalize_for_bm25()<br/>→ chunks_bm25.json"]
+        EMBED["Stage 3 — Embed<br/>OpenAI text-embedding-3-small<br/>→ Chroma vectors"]
+    end
+
+    subgraph STORE["Storage Layer"]
+        VSTORE[("Chroma Vector Store<br/>'course_rag' collection")]
+        BM25IDX[("BM25 Index<br/>(in-memory, normalized text)")]
+    end
+
+    subgraph QUERY["Online Query Pipeline — 5_chat/"]
+        direction TB
+        UI["Streamlit Chat UI<br/>app.py / run_app.py"]
+        CTX["contextualize_query()<br/>gpt-4o-mini<br/>resolve pronouns using history"]
+        REWRITE["rewrite_query()<br/>gpt-4o-mini<br/>keyword-dense search query"]
+        HYBRID["Hybrid candidate pool<br/>semantic top-20 ∪ BM25 top-20"]
+        RERANK["Cross-encoder rerank<br/>ms-marco-MiniLM-L-6-v2<br/>→ top-5 chunks"]
+        GENERATE["generate()<br/>gpt-4o-mini<br/>context + history → answer"]
+    end
+
+    subgraph EVAL["Evaluation Harness — 4_retrieval/"]
+        direction TB
+        RETEVAL["run_eval.py<br/>→ retrieval_eval.json"]
+        RAGEVAL["run_rag_eval.py<br/>→ rag_eval.json"]
+        RAGAS["run_ragas_eval.py<br/>faithfulness / relevancy / recall"]
+        COMPARE["build_comparison_csv.py<br/>→ retrieval_comparison.csv"]
+    end
+
+    subgraph OBS["Observability — LangSmith"]
+        LS_LIVE["course-rag project<br/>(live chat traces)"]
+        LS_EVAL["course-rag-eval project<br/>(eval traces)"]
+    end
+
+    PDFS --> PRE
+    TRANS --> PRE
+    URLS --> PRE
+    PRE --> CHUNK
+    CHUNK --> EMBED --> VSTORE
+    CHUNK --> BM25BUILD --> BM25IDX
+
+    UI --> CTX --> REWRITE --> HYBRID
+    VSTORE --> HYBRID
+    BM25IDX --> HYBRID
+    HYBRID --> RERANK --> GENERATE --> UI
+
+    VSTORE -.-> RETEVAL
+    BM25IDX -.-> RETEVAL
+    RETEVAL --> RAGEVAL --> RAGAS --> COMPARE
+
+    GENERATE -.traces.-> LS_LIVE
+    RETEVAL -.traces.-> LS_EVAL
+    RAGEVAL -.traces.-> LS_EVAL
+    RAGAS -.traces.-> LS_EVAL
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+</script>
+
+A full breakdown of every component, what it does, and the files that
+implement it is in [`ARCHITECTURE.md`](https://github.com/usneha/agentic-ai-sneha/blob/main/course-rag/ARCHITECTURE.md)
+in the repo.
+
+---
+
 ## Evaluation Report
 
 Four retrieval methods were compared: **semantic** (dense embeddings),
