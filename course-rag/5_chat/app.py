@@ -18,6 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from generator import generate
 
 st.set_page_config(page_title="Mastering Agentic AI — Course Assistant", page_icon="🤖")
+
+with st.sidebar:
+    st.image(str(Path(__file__).parent / "assets" / "gen_academy_banner.png"))
+
 st.title("Mastering Agentic AI — Course Assistant")
 
 
