@@ -53,9 +53,11 @@ if prompt := st.chat_input("Ask a question about the course..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:-1]]
+
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            answer, results = generate(prompt)
+            answer, results = generate(prompt, history=history)
         st.markdown(answer)
         if results:
             _render_sources(results)
