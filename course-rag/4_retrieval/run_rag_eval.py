@@ -24,6 +24,7 @@ os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 from langchain_openai import ChatOpenAI
 
+from reranker_config import hybrid_search_rewritten_reranked
 from retriever_config import get_bm25_results_with_scores, get_vector_store, hybrid_search
 from run_retrieval import HYBRID_EDGE_CASES, SAMPLE_QUERIES
 
@@ -31,6 +32,11 @@ QUESTIONS = SAMPLE_QUERIES + [query for query, _label in HYBRID_EDGE_CASES]
 K = 5
 GEN_MODEL = "gpt-4o-mini"
 OUTPUT_PATH = Path(__file__).parent.parent / "output" / "rag_eval.json"
+
+# Opt-in: also run a rewrite_query() + cross-encoder-reranked method.
+# Default (unset) keeps output identical to the existing 3-method eval.
+ENABLE_REWRITE_RERANK = os.getenv("ENABLE_REWRITE_RERANK", "false").lower() == "true"
+METHODS = ("semantic", "bm25", "hybrid") + (("rewritten_reranked",) if ENABLE_REWRITE_RERANK else ())
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant answering questions about an Agentic AI "
@@ -68,6 +74,8 @@ def _docs_for(method: str, question: str):
         return [doc for doc, _score in get_bm25_results_with_scores(question, k=K)]
     if method == "hybrid":
         return [doc for doc, _origin, _rrf, _sem in hybrid_search(question, k=K)]
+    if method == "rewritten_reranked":
+        return [doc for doc, _origin, _score, _sem in hybrid_search_rewritten_reranked(question, k=K)]
     raise ValueError(method)
 
 
@@ -91,7 +99,7 @@ def run_rag_eval():
     results = []
 
     for question in QUESTIONS:
-        for method in ("semantic", "bm25", "hybrid"):
+        for method in METHODS:
             docs = _docs_for(method, question)
             context = _build_context(docs)
             response = llm.invoke(
