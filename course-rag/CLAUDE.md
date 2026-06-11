@@ -70,11 +70,21 @@
 
 ## Stage 5 — Chat UI
 
-- `5_chat/generator.py` — `generate(query, k=5)` → `(answer, results)`; retrieval via `hybrid_search_rewritten_reranked()` (per RAGAS recommendation), generation via `gpt-4o-mini` (chosen over `langchain-anthropic` since no Anthropic API key is configured). `results: List[Tuple[Document, origin_str, rerank_score, sem_score]]`.
-- `5_chat/app.py` — Streamlit chat UI: clean chat (no sidebar filters), inline `[Source N]` citations in the answer, collapsible "Sources" expander showing source name/page/speaker + content preview per chunk.
+- `5_chat/generator.py` — `generate(query, history=None, k=5)` → `(answer, results)`; retrieval via `hybrid_search_rewritten_reranked()` (per RAGAS recommendation), generation via `gpt-4o-mini` (chosen over `langchain-anthropic` since no Anthropic API key is configured). `results: List[Tuple[Document, origin_str, rerank_score, sem_score]]`.
+- **Conversational follow-ups (2026-06-11)**: `4_retrieval/query_rewriter.py` adds `contextualize_query(history, question)` — uses `gpt-4o-mini` + prior turns to rewrite a follow-up (e.g. "How does it compare to fine-tuning?") into a standalone question before it goes through `rewrite_query()`/`hybrid_search_rewritten_reranked()`. `generate()` also passes `history` (list of `{"role", "content"}` dicts) into the generation messages so the final answer can resolve pronouns/implicit references too. Verified via a 2-turn CLI test ("What is RAG?" → "How does it compare to fine-tuning?") and confirmed working in the Streamlit UI.
+- `5_chat/app.py` — Streamlit chat UI: inline `[Source N]` citations in the answer, collapsible "Sources" expander showing source name/page/speaker + content preview per chunk. Builds `history` from `st.session_state.messages[:-1]` (full conversation so far, no cap) and passes it to `generate()`. Sidebar shows the "Mastering Agentic AI" Gen Academy certification banner (`5_chat/assets/gen_academy_banner.png`).
 - `5_chat/run_app.py` — **launcher, use this instead of `streamlit run app.py`**. `streamlit run` imports streamlit (and its protobuf-based deps via chromadb's opentelemetry exporter) before the app script runs, so `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python` set inside `app.py` is too late and causes `TypeError: Descriptors cannot be created directly`. `run_app.py` sets the env var first, then invokes `streamlit.web.cli`.
-- `5_chat/run_chat.py` — CLI smoke-test harness for the generator (unchanged behavior, updated source-print labels for the rerank-based `results` tuple).
+- `5_chat/run_chat.py` — CLI smoke-test harness for the generator; accumulates `history` across the input loop (mirrors `app.py`) so multi-turn follow-ups can be tested without launching the UI.
 - Run: `uv run python 5_chat/run_app.py` (requires `uv sync --extra chat` first if not already synced). Confirmed working end-to-end by the user (2026-06-10).
+
+---
+
+## Observability — LangSmith
+
+- Tracing enabled via `.env`: `LANGCHAIN_TRACING_V2=true`, `LANGSMITH_API_KEY=lsv2_...`, `LANGCHAIN_PROJECT=course-rag`. Picked up automatically by any module that calls `load_dotenv()` (directly or transitively) before invoking a LangChain `ChatOpenAI`.
+- **Two projects**: live chat traces (`5_chat/`) go to `course-rag`. Eval-script traces (`4_retrieval/run_eval.py`, `run_rag_eval.py`, `run_ragas_eval.py`) override `os.environ["LANGCHAIN_PROJECT"] = "course-rag-eval"` after `load_dotenv()`, so repeated eval runs don't clutter the live-chat project.
+- `run_ragas_eval.py` calls RAGAS via a raw `openai.AsyncOpenAI` client (not a LangChain `Runnable`), so `LANGCHAIN_TRACING_V2` alone wouldn't trace those judge/embedding calls — wrapped with `langsmith.wrappers.wrap_openai(AsyncOpenAI())` to capture them too.
+- Confirmed working end-to-end by the user (2026-06-11): traces visible in both `course-rag` and `course-rag-eval` projects in the LangSmith UI.
 
 ---
 
