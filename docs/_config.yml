@@ -1,0 +1,3 @@
+title: course-rag — Mastering Agentic AI Course Assistant
+description: A RAG chatbot for the Mastering Agentic AI course, with a hybrid retrieval + rerank pipeline and a RAGAS-based evaluation report.
+theme: jekyll-theme-cayman
