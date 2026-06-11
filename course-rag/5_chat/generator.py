@@ -1,10 +1,11 @@
 """
-RAG generator: hybrid retrieval (BM25 + semantic) then gpt-4o-mini.
+RAG generator: query-rewritten, cross-encoder-reranked hybrid retrieval
+(BM25 + semantic) then gpt-4o-mini.
 
 Usage:
     from generator import generate
     answer, results = generate("How do agents decide what to do?")
-    # results: List[Tuple[Document, origin_str, rrf_score]]
+    # results: List[Tuple[Document, origin_str, rerank_score, sem_score]]
 """
 
 import os
@@ -22,10 +23,9 @@ from langchain_openai import ChatOpenAI
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "4_retrieval"))
-from retriever_config import hybrid_search
+from reranker_config import hybrid_search_rewritten_reranked
 
 MODEL = "gpt-4o-mini"
-SEMANTIC_DISTANCE_THRESHOLD = 1.2  # drop chunks above this distance (lower=better)
 
 SYSTEM_PROMPT = """\
 You are a teaching assistant for the "Mastering Agentic AI" course.
@@ -56,11 +56,7 @@ def _build_context(results: List[Tuple[Document, str, float, Optional[float]]]) 
 
 
 def generate(query: str, k: int = 5) -> Tuple[str, List[Tuple[Document, str, float, Optional[float]]]]:
-    results = hybrid_search(query, k=k)
-    results = [
-        r for r in results
-        if r[3] is not None and r[3] <= SEMANTIC_DISTANCE_THRESHOLD
-    ]
+    results = hybrid_search_rewritten_reranked(query, k=k)
 
     if not results:
         return "The course material does not contain enough information to answer this question.", []
