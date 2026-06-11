@@ -20,6 +20,9 @@ from reranker_config import hybrid_search_rewritten_reranked
 from retriever_config import get_bm25_results_with_scores, get_vector_store, hybrid_search
 from run_retrieval import HYBRID_EDGE_CASES, SAMPLE_QUERIES
 
+# Keep eval-script LangSmith traces separate from live chat traces
+os.environ["LANGCHAIN_PROJECT"] = "course-rag-eval"
+
 QUESTIONS = SAMPLE_QUERIES + [query for query, _label in HYBRID_EDGE_CASES]
 K = 5
 OUTPUT_PATH = Path(__file__).parent.parent / "output" / "retrieval_eval.json"

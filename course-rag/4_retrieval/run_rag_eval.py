@@ -22,6 +22,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 load_dotenv()
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
+# Keep eval-script LangSmith traces separate from live chat traces
+os.environ["LANGCHAIN_PROJECT"] = "course-rag-eval"
+
 from langchain_openai import ChatOpenAI
 
 from reranker_config import hybrid_search_rewritten_reranked
