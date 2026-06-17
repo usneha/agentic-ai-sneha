@@ -1,0 +1,291 @@
+# Skill taxonomy — consumed by assessor.py and planner.py
+# Each sub-skill has: id, name, domain, prerequisites, and sequencing_rule
+
+domains:
+  - id: prompting
+    name: Prompting & Context Engineering
+    sub_skills:
+      - id: prompting.basic
+        name: Basic Prompt Design
+        prerequisites: []
+        sequencing_note: entry point for all paths
+
+      - id: prompting.system
+        name: System Prompt Architecture
+        prerequisites: [prompting.basic]
+
+      - id: prompting.cot
+        name: Chain-of-Thought & Reasoning
+        prerequisites: [prompting.basic]
+
+      - id: prompting.structured
+        name: Structured Outputs
+        prerequisites: [prompting.basic]
+
+      - id: prompting.context_mgmt
+        name: Context Window Management
+        prerequisites: [prompting.basic, prompting.system]
+
+      - id: prompting.iteration
+        name: Prompt Versioning & Iteration
+        prerequisites: [prompting.basic]
+
+  - id: rag
+    name: Retrieval-Augmented Generation
+    sub_skills:
+      - id: rag.embeddings
+        name: Embeddings & Vector Stores
+        prerequisites: [prompting.basic]
+
+      - id: rag.chunking
+        name: Chunking Strategies
+        prerequisites: [rag.embeddings]
+
+      - id: rag.retrieval_basic
+        name: Basic Retrieval
+        prerequisites: [rag.embeddings, rag.chunking]
+
+      - id: rag.hybrid
+        name: Hybrid Search
+        prerequisites: [rag.retrieval_basic]
+        min_prerequisite_score: 0.5
+
+      - id: rag.reranking
+        name: Reranking
+        prerequisites: [rag.retrieval_basic]
+        min_prerequisite_score: 0.5
+
+      - id: rag.ingestion
+        name: Ingestion Pipelines
+        prerequisites: [rag.retrieval_basic]
+
+      - id: rag.multimodal
+        name: Multimodal RAG
+        prerequisites: [rag.retrieval_basic, rag.embeddings]
+        min_prerequisite_score: 0.6
+
+  - id: eval
+    name: Evaluation & Experimentation
+    sub_skills:
+      - id: eval.datasets
+        name: Golden Dataset Construction
+        prerequisites: []
+        activation_gate:
+          any_of: [rag.retrieval_basic, agents.single_agent]
+          min_score: 0.3
+
+      - id: eval.retrieval_metrics
+        name: Retrieval Metrics
+        prerequisites: [eval.datasets, rag.retrieval_basic]
+
+      - id: eval.generation_metrics
+        name: Generation Metrics
+        prerequisites: [eval.datasets]
+
+      - id: eval.experiment_tracking
+        name: Experiment Tracking
+        prerequisites: [eval.datasets]
+
+      - id: eval.ab_testing
+        name: A/B Testing for AI
+        prerequisites: [eval.experiment_tracking]
+        min_prerequisite_score: 0.5
+
+      - id: eval.frameworks
+        name: Evaluation Frameworks
+        prerequisites: [eval.datasets, eval.generation_metrics]
+
+  - id: agents
+    name: Agents & Orchestration
+    sub_skills:
+      - id: agents.tool_use
+        name: Tool Use / Function Calling
+        prerequisites: [prompting.basic]
+        min_prerequisite_score: 0.4
+
+      - id: agents.single_agent
+        name: Single Agent Loops
+        prerequisites: [agents.tool_use, prompting.structured]
+        min_prerequisite_score: 0.3
+
+      - id: agents.decomposition
+        name: Task Decomposition
+        prerequisites: [agents.single_agent]
+
+      - id: agents.multi_agent
+        name: Multi-Agent Systems
+        prerequisites: [agents.single_agent]
+        min_prerequisite_score: 0.5
+
+      - id: agents.error_handling
+        name: Error Handling & Recovery
+        prerequisites: [agents.single_agent]
+
+      - id: agents.hitl
+        name: Human-in-the-Loop
+        prerequisites: [agents.single_agent]
+
+  - id: memory
+    name: Memory Systems
+    sub_skills:
+      - id: memory.conversation
+        name: Conversation Memory
+        prerequisites: [agents.single_agent]
+        min_prerequisite_score: 0.4
+
+      - id: memory.episodic
+        name: Episodic / Long-Term Memory
+        prerequisites: [memory.conversation]
+
+      - id: memory.external
+        name: External Memory Stores
+        prerequisites: [memory.conversation]
+
+      - id: memory.retrieval
+        name: Memory Retrieval Patterns
+        prerequisites: [memory.external, rag.retrieval_basic]
+
+      - id: memory.management
+        name: Memory Management
+        prerequisites: [memory.episodic]
+
+  - id: mcp
+    name: Model Context Protocol
+    sub_skills:
+      - id: mcp.concepts
+        name: MCP Concepts
+        prerequisites: [agents.tool_use]
+        min_prerequisite_score: 0.5
+
+      - id: mcp.building
+        name: Building MCP Servers
+        prerequisites: [mcp.concepts]
+
+      - id: mcp.integrations
+        name: External Integrations via MCP
+        prerequisites: [mcp.building]
+
+      - id: mcp.production
+        name: MCP in Production
+        prerequisites: [mcp.integrations, deployment.api]
+
+  - id: deployment
+    name: Deployment & Production Engineering
+    sub_skills:
+      - id: deployment.api
+        name: API Design for AI
+        prerequisites: []
+        activation_gate:
+          any_of: [rag.retrieval_basic, agents.single_agent]
+          min_score: 0.5
+
+      - id: deployment.containers
+        name: Containerization
+        prerequisites: [deployment.api]
+
+      - id: deployment.cicd
+        name: CI/CD for AI Apps
+        prerequisites: [deployment.containers]
+
+      - id: deployment.latency
+        name: Latency Optimization
+        prerequisites: [deployment.api]
+
+      - id: deployment.cost
+        name: Cost Management
+        prerequisites: [deployment.api]
+
+      - id: deployment.infra
+        name: Production Infrastructure
+        prerequisites: [deployment.containers, deployment.cicd]
+
+  - id: observability
+    name: Observability & Monitoring
+    sub_skills:
+      - id: observability.tracing
+        name: LLM Tracing
+        prerequisites: [deployment.api]
+        min_prerequisite_score: 0.4
+
+      - id: observability.cost
+        name: Cost & Token Monitoring
+        prerequisites: [deployment.api]
+
+      - id: observability.quality
+        name: Quality Monitoring
+        prerequisites: [observability.tracing, eval.generation_metrics]
+
+      - id: observability.logging
+        name: Structured Logging
+        prerequisites: [deployment.api]
+
+      - id: observability.debugging
+        name: Production Debugging
+        prerequisites: [observability.tracing, observability.logging]
+
+# ── Foundation skills ─────────────────────────────────────────────────────────
+# General software/cloud/frontend skills detected from non-AI repos.
+# These do NOT appear in the AI domain roadmap. They are stored in the
+# skill_graph as foundation.* entries and influence AI skill effective_score
+# via foundation_score boosts (see ai_credits below).
+
+foundation_domains:
+  - id: foundation_software
+    name: Software Engineering Foundation
+    sub_skills:
+      - id: foundation.testing
+        name: Software Testing
+        category: foundation
+        ai_credits:
+          eval.datasets: 0.10
+          eval.experiment_tracking: 0.05
+
+      - id: foundation.code_quality
+        name: Code Quality & CI/CD
+        category: foundation
+        ai_credits:
+          deployment.cicd: 0.15
+          observability.logging: 0.05
+
+  - id: foundation_backend
+    name: Backend & Application Development
+    sub_skills:
+      - id: foundation.backend
+        name: Backend API Development
+        category: foundation
+        ai_credits:
+          deployment.api: 0.15
+          observability.logging: 0.05
+
+      - id: foundation.databases
+        name: Database Usage
+        category: foundation
+        ai_credits:
+          rag.ingestion: 0.10
+          memory.external: 0.10
+
+  - id: foundation_cloud
+    name: Cloud & Infrastructure
+    sub_skills:
+      - id: foundation.cloud_services
+        name: Cloud Platform Services
+        category: foundation
+        ai_credits:
+          deployment.infra: 0.15
+          deployment.cost: 0.08
+
+      - id: foundation.containers
+        name: Containerization
+        category: foundation
+        ai_credits:
+          deployment.containers: 0.20
+          deployment.infra: 0.10
+
+  - id: foundation_frontend
+    name: Frontend Development
+    sub_skills:
+      - id: foundation.frontend
+        name: Frontend Development
+        category: foundation
+        ai_credits:
+          deployment.api: 0.05

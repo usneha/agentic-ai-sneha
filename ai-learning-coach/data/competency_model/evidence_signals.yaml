@@ -1,0 +1,1125 @@
+# Evidence signal definitions — Evidence Validation v2
+#
+# DESIGN PRINCIPLE: Evidence is behavioral, not lexical.
+# A skill is credited when the repo contains deliberate design decisions,
+# not when it mentions a related word. A match in vendored JS or a generic
+# Python import does not constitute skill evidence.
+#
+# Evidence maturity levels (renamed from strong/moderate/weak):
+#   architectural: +0.35  File/directory structure proves a design decision.
+#                         Hard to false-positive. Examples: dedicated prompts/
+#                         directory, a Dockerfile, a LangGraph StateGraph.
+#   behavioral:    +0.20  Code that does something AI-specific: instantiates a
+#                         framework class, calls an API with domain-relevant args,
+#                         configures a component. Must appear in a trusted file.
+#   contextual:    +0.05  Import or reference to a specific library in a project-
+#                         owned file. Insufficient alone — only adds score when
+#                         at least one behavioral or architectural match also exists.
+#
+# Stacking rules:
+#   - contextual alone: skill marked as pending, zero score credit
+#   - contextual + behavioral: +0.25 total
+#   - behavioral alone: +0.20
+#   - architectural alone: +0.35
+#   - architectural + behavioral: +0.55 (cap per repo)
+#   - contextual does NOT add when architectural is already present
+#
+# File trust tiers (enforced by scanner):
+#   trusted:      .py, .ipynb, .ts, .tsx, .yaml, .yml, .toml, .md,
+#                 Dockerfile, Makefile, docker-compose.yml, .env.example
+#                 → all three levels run against these
+#   semi_trusted: .js, .jsx, .sh, .json (non-vendor, non-minified)
+#                 → architectural and behavioral only; no contextual
+#   excluded:     anything under vendor dirs or with excluded suffixes
+#                 → nothing runs against these
+#
+# Vendor exclusion (enforced by scanner):
+#   dirs:    jquery, vendor, bower_components, lib, libs, third_party,
+#            static/js, static/css, public, external, deps, wwwroot
+#   suffixes: .min.js, .min.css, .bundle.js, .chunk.js
+#   files:   package-lock.json, yarn.lock, poetry.lock (already skipped)
+#
+# Minimum evidence requirement:
+#   A skill receives zero score until at least one behavioral or architectural
+#   match is found in a trusted or semi-trusted file. Contextual-only signals
+#   are held as "pending" and not passed to the assessor.
+#   Exception: infrastructure skills (deployment.containers, deployment.cicd)
+#   may be credited on architectural (path) evidence alone.
+
+source_weights:
+  github_strong: 0.35    # architectural
+  github_moderate: 0.20  # behavioral
+  github_weak: 0.05      # contextual (only emitted when behavioral also present)
+  journal_built_unverified: 0.25
+  journal_course_completed: 0.15
+  journal_self_assessed: 0.10
+  journal_struggled: -0.05
+  journal_reflection_insight: 0.05
+
+bonuses:
+  breadth: 0.15        # skill in 3+ repos
+  integration: 0.10    # co-dependent skills in same repo
+
+decay:
+  trigger_days: 90
+  rate_per_30_days: 0.05
+  floor_level: emerging      # 0.20
+  exempt_above: demonstrated # 0.60 — demonstrated+ does not decay
+
+score_thresholds:
+  no_evidence: 0.0
+  emerging: 0.20
+  developing: 0.40
+  demonstrated: 0.60
+  strong: 0.80
+
+confidence_rules:
+  # v2: confidence reflects trust quality, not just quantity
+  - evidence: contextual_only
+    confidence: none          # not credited
+  - evidence: behavioral_single_file
+    confidence: low
+  - evidence: behavioral_multi_file
+    confidence: medium
+  - evidence: architectural_only
+    confidence: medium
+  - evidence: architectural_plus_behavioral
+    confidence: high
+  - evidence: multi_repo
+    confidence: high
+
+---
+
+skills:
+
+  prompting.basic:
+    github:
+      strong:
+        - pattern: "prompts/"
+          description: Dedicated prompts directory
+          file_scope: path_only
+        - pattern: "prompt_.*\\.py|prompt_.*\\.txt|prompt_.*\\.md"
+          description: Named prompt files indicating intentional prompt management
+          file_scope: path_only
+        - pattern: "SYSTEM_PROMPT\\s*=|system_prompt\\s*=|SystemMessage\\("
+          description: Named, reusable system prompt constants
+      moderate:
+        - pattern: "\"role\":\\s*\"system\"|'role':\\s*'system'"
+          description: Role-based message structure
+        - pattern: "messages\\s*=\\s*\\[.*role.*system"
+          description: Message array with system role
+        - pattern: "f\".*\\{.*\\}.*prompt|PromptTemplate\\("
+          description: Dynamic prompt construction with templating library
+      weak:
+        - pattern: "from langchain.*prompts import|from anthropic import"
+          description: LLM framework import in project file
+    journal:
+      keywords: [prompt, prompting, system prompt, few-shot, instruction, role, user message, assistant message]
+
+  prompting.system:
+    github:
+      strong:
+        - pattern: "SYSTEM_PROMPT\\s*=|SystemMessage\\("
+          description: Named system prompt constant or class
+        - pattern: "prompts/system_|system_prompts/"
+          description: Organized system prompt files
+          file_scope: path_only
+        - pattern: "class\\s+\\w*SystemPrompt|def\\s+\\w*system_prompt"
+          description: System prompt as a designed component
+      moderate:
+        - pattern: "you are a.*assistant|you are an.*expert"
+          description: Persona-style system prompt content
+        - pattern: "role.*system.*content|\"role\".*\"system\""
+          description: Inline system message with role structure
+      weak:
+        - pattern: "system_message\\s*=|system_instructions\\s*="
+          description: System message variable assignment
+    journal:
+      keywords: [system prompt, system message, persona, role definition, instructions]
+
+  prompting.cot:
+    github:
+      strong:
+        - pattern: "think step by step|let's reason|step-by-step reasoning"
+          description: Explicit CoT trigger phrase in prompt string
+        - pattern: "chain.of.thought|cot_prompt|reasoning_prompt"
+          description: Named CoT component
+      moderate:
+        - pattern: "think.*before.*answer|reason.*then.*respond"
+          description: Reasoning-before-answer pattern in prompt
+        - pattern: "step 1.*step 2|<thinking>|<scratchpad>"
+          description: Multi-step or scratchpad structure in prompt
+      weak:
+        - pattern: "chain_of_thought|cot_examples"
+          description: CoT variable or example reference
+    journal:
+      keywords: [chain of thought, CoT, step by step, reasoning, think before, scratchpad]
+
+  prompting.structured:
+    github:
+      strong:
+        - pattern: "class\\s+\\w+\\(BaseModel\\)|response_format.*json_schema"
+          description: Pydantic model for structured LLM output
+        - pattern: "from instructor import|import outlines|from guidance import"
+          description: Structured output library import
+        - pattern: "json_mode=True|response_format=.*type.*json_object"
+          description: JSON mode configuration
+      moderate:
+        - pattern: "json\\.loads\\(.*response|output_parser\\.parse"
+          description: Parsing LLM JSON output
+        - pattern: "PydanticOutputParser|JsonOutputParser|StructuredOutputParser"
+          description: LangChain output parsers
+      weak:
+        - pattern: "model_json_schema|schema_json\\(\\)"
+          description: JSON schema extraction for LLM
+    journal:
+      keywords: [structured output, JSON mode, Pydantic, output parser, function calling schema, typed output]
+
+  prompting.context_mgmt:
+    github:
+      strong:
+        - pattern: "count_tokens|tiktoken|num_tokens_from|token_count"
+          description: Explicit token counting
+        - pattern: "context_window\\s*=|max_tokens.*budget|truncate.*context"
+          description: Context window budget management
+        - pattern: "sliding_window|context_compression|context_pruning"
+          description: Advanced context management
+      moderate:
+        - pattern: "trim.*messages|messages\\[[-\\d:]\\]|oldest.*messages"
+          description: Message history trimming
+        - pattern: "max_context_length|context_limit"
+          description: Context limit handling
+      weak:
+        - pattern: "tiktoken\\.encoding|cl100k_base"
+          description: Specific tokenizer reference
+    journal:
+      keywords: [context window, token limit, context management, context compression, token counting, fit in context]
+
+  prompting.iteration:
+    github:
+      strong:
+        - pattern: "prompt_v\\d+|prompt.*version.*=\\s*\\d"
+          description: Versioned prompt files or constants
+          file_scope: path_only
+        - pattern: "prompt_comparison|eval.*prompt.*variant"
+          description: Systematic prompt comparison
+        - pattern: "prompt_registry|PromptHub|langfuse.*prompt"
+          description: Prompt management tooling
+      moderate:
+        - pattern: "CHANGELOG.*prompt|prompt.*history"
+          description: Tracking prompt changes
+        - pattern: "baseline.*prompt|improved.*prompt|prompt.*v\\d"
+          description: Iteration framing in variable names
+      weak:
+        - pattern: "langfuse|promptlayer|helicone"
+          description: Prompt observability tool import
+    journal:
+      keywords: [prompt iteration, prompt versioning, A/B prompt, tested prompts, prompt comparison, prompt engineering]
+
+  rag.embeddings:
+    github:
+      strong:
+        - pattern: "chromadb|pinecone|weaviate|qdrant|milvus|pgvector|faiss"
+          description: Vector database instantiation
+        - pattern: "OpenAIEmbeddings\\(|HuggingFaceEmbeddings\\(|SentenceTransformer\\("
+          description: Embedding model class instantiation
+        - pattern: "embed_documents|encode\\(sentences|get_embedding\\("
+          description: Document embedding function call
+      moderate:
+        - pattern: "vectorstore\\.add|vector_store\\.upsert|collection\\.add"
+          description: Adding documents to vector store
+        - pattern: "similarity_search\\(|cosine_similarity\\("
+          description: Similarity search call
+      weak:
+        - pattern: "from langchain.*embeddings import|from sentence_transformers import"
+          description: Embedding library import
+    journal:
+      keywords: [embeddings, vector store, vector database, Chroma, Pinecone, FAISS, similarity search, semantic search]
+
+  rag.chunking:
+    github:
+      strong:
+        - pattern: "RecursiveCharacterTextSplitter\\(|SemanticChunker\\(|chunk_overlap\\s*="
+          description: Chunking class instantiation with config
+        - pattern: "def\\s+\\w*chunk|chunking_strategy|chunk_size.*=.*overlap"
+          description: Custom chunking logic
+      moderate:
+        - pattern: "text_splitter\\.split|splitter\\.create_documents"
+          description: Text splitter in use
+        - pattern: "chunk_size\\s*=|chunk_overlap\\s*="
+          description: Chunking parameters configured
+      weak:
+        - pattern: "from langchain.*text_splitter import|from langchain.*splitter import"
+          description: Text splitter import
+    journal:
+      keywords: [chunking, text splitting, chunk size, chunk overlap, recursive splitter, semantic chunking]
+
+  rag.retrieval_basic:
+    github:
+      strong:
+        - pattern: "RetrievalQA\\.from|retrieval_chain|ConversationalRetrievalChain"
+          description: End-to-end retrieval chain setup
+        - pattern: "\\.as_retriever\\(|similarity_search_with_score\\("
+          description: Configured retriever call
+        - pattern: "vectorstore.*retriev|retriev.*vectorstore"
+          description: Vector store used for retrieval
+      moderate:
+        - pattern: "similarity_search\\(.*k=|top_k\\s*=|fetch_k\\s*="
+          description: Top-k retrieval configuration
+        - pattern: "get_relevant_documents\\(|retriever\\.invoke\\("
+          description: Retriever invocation
+      weak:
+        - pattern: "from langchain.*retriev|BaseRetriever"
+          description: Retriever base class import
+    journal:
+      keywords: [RAG, retrieval, retrieval pipeline, retrieval augmented, top-k, semantic retrieval]
+
+  rag.hybrid:
+    github:
+      strong:
+        - pattern: "EnsembleRetriever\\(|BM25Retriever.*merge|sparse.*dense.*combin"
+          description: Hybrid retriever implementation
+        - pattern: "Reciprocal.Rank.Fusion|rrf_fusion|reciprocal_rank"
+          description: RRF fusion scoring
+      moderate:
+        - pattern: "BM25Retriever\\(|BM25Okapi\\("
+          description: BM25 retriever instantiation
+        - pattern: "hybrid.*retriev|multi.*retriev.*ensemble"
+          description: Hybrid/multi-retriever pattern
+      weak:
+        - pattern: "from langchain.*bm25|from rank_bm25 import"
+          description: BM25 library import
+    journal:
+      keywords: [hybrid search, BM25, keyword search, sparse dense, ensemble retriever, fusion]
+
+  rag.reranking:
+    github:
+      strong:
+        - pattern: "CrossEncoder\\(|cross_encoder\\.predict"
+          description: Cross-encoder reranker
+        - pattern: "cohere\\.rerank\\(|CohereRerank\\(|FlashRank\\("
+          description: Named reranking library call
+        - pattern: "sorted\\(.*rerank_score|reranked_docs"
+          description: Applying rerank scores to results
+      moderate:
+        - pattern: "reranker\\s*=|reranker\\.rerank\\("
+          description: Reranker component usage
+        - pattern: "ColBERT|late_interaction"
+          description: Late-interaction retrieval model
+      weak:
+        - pattern: "from rerankers import|from flashrank import"
+          description: Reranking library import
+    journal:
+      keywords: [reranking, reranker, cross-encoder, Cohere rerank, FlashRank, ColBERT, re-rank]
+
+  rag.ingestion:
+    github:
+      strong:
+        - pattern: "ingest\\.py|ingestion_pipeline|ingest_documents"
+          description: Dedicated ingestion module or function
+          file_scope: path_only
+        - pattern: "PyPDFLoader\\(|WebBaseLoader\\(|DirectoryLoader\\("
+          description: Multi-source document loader instantiation
+        - pattern: "vectorstore\\.add_documents|index.*upsert|incremental.*ingest"
+          description: Index update / incremental ingestion
+      moderate:
+        - pattern: "load_documents\\(|loader\\.load\\(|documents\\s*=.*load"
+          description: Document loading call
+        - pattern: "document.*processing.*pipeline|process.*documents"
+          description: Document processing pipeline
+      weak:
+        - pattern: "from langchain.*document_loaders import|from llama_index.*readers import"
+          description: Document loader import
+    journal:
+      keywords: [ingestion, document loading, data ingestion, index building, PDF loader, web scraping for RAG]
+
+  rag.multimodal:
+    github:
+      strong:
+        - pattern: "image.*embed|vision.*embed|clip.*embed|ImageEmbedding"
+          description: Image embedding for retrieval
+        - pattern: "ColPali|ColQwen|multi.*modal.*retriev"
+          description: Multimodal retrieval model
+        - pattern: "pdf.*image.*extract|page.*image.*vectorstore"
+          description: PDF page image extraction for RAG
+      moderate:
+        - pattern: "vision.*llm.*retriev|image.*chunk|ocr.*embed"
+          description: Vision + retrieval combination
+        - pattern: "gpt-4.*vision|claude.*vision.*document"
+          description: Vision LLM in retrieval context
+      weak:
+        - pattern: "from colpali|from byaldi import"
+          description: Multimodal RAG library import
+    journal:
+      keywords: [multimodal RAG, image retrieval, visual RAG, ColPali, multimodal embeddings, vision RAG]
+
+  eval.datasets:
+    github:
+      strong:
+        - pattern: "eval_dataset\\.json|test_questions\\.jsonl|golden_dataset"
+          description: Named evaluation dataset files
+          file_scope: path_only
+        - pattern: "ground_truth.*answer|expected_answer|reference_answer"
+          description: Ground truth label structure in code
+        - pattern: "annotation.*pipeline|human.*eval.*dataset"
+          description: Dataset construction methodology
+      moderate:
+        - pattern: "test_cases\\s*=|qa_pairs|eval_questions"
+          description: Q&A evaluation pairs
+        - pattern: "benchmark.*dataset|eval.*data.*json"
+          description: Evaluation data references
+      weak:
+        - pattern: "ground_truth|expected_output"
+          description: Ground truth variable in project code
+    journal:
+      keywords: [golden dataset, evaluation dataset, test questions, ground truth, annotation, Q&A pairs, labeled data]
+
+  eval.retrieval_metrics:
+    github:
+      strong:
+        - pattern: "recall_at_k|ndcg_at_k|mrr_score|precision_at_k"
+          description: Named retrieval metric functions
+        - pattern: "retrieval_evaluation\\.py|retrieval_metrics\\.py"
+          description: Dedicated retrieval evaluation module
+          file_scope: path_only
+        - pattern: "mean_reciprocal_rank|mean_average_precision"
+          description: Named retrieval metric computations
+      moderate:
+        - pattern: "ContextRecall\\(|ContextPrecision\\(|context_recall\\.ascore"
+          description: RAGAS retrieval metric class instantiation or call
+        - pattern: "hits_at_k|recall@\\d|precision@\\d|ndcg@\\d"
+          description: Retrieval metric at-k notation
+        - pattern: "run_retrieval_eval|retrieval_eval\\.py"
+          description: Retrieval evaluation script
+          file_scope: path_only
+      weak:
+        - pattern: "from ragas.metrics.*import.*ContextRecall|from ragas.metrics.*import.*ContextPrecision"
+          description: RAGAS retrieval metric import
+    journal:
+      keywords: [recall at k, MRR, nDCG, precision at k, retrieval metrics, hits at k, retrieval evaluation]
+
+  eval.generation_metrics:
+    github:
+      strong:
+        - pattern: "ragas\\.evaluate|from ragas import.*faithfulness"
+          description: RAGAS framework evaluation call
+        - pattern: "llm.*judge|judge_prompt|grading.*llm|LLMJudge"
+          description: LLM-as-judge pattern
+        - pattern: "context_precision|context_recall|answer_faithfulness"
+          description: Named generation quality metrics
+      moderate:
+        - pattern: "faithfulness.*score|hallucination.*detect|groundedness"
+          description: Faithfulness evaluation
+        - pattern: "DeepEval\\(|from deepeval import|EvaluationResult"
+          description: DeepEval framework usage
+      weak:
+        - pattern: "from ragas import|import ragas"
+          description: RAGAS import
+    journal:
+      keywords: [RAGAS, faithfulness, LLM judge, hallucination, generation metrics, answer quality, DeepEval, groundedness]
+
+  eval.experiment_tracking:
+    github:
+      strong:
+        - pattern: "mlflow\\.start_run|wandb\\.init|neptune\\.init"
+          description: Experiment tracking tool initialization
+        - pattern: "compare.*configs|baseline.*vs.*experiment|experiment.*comparison"
+          description: Explicit experiment comparison
+        - pattern: "experiment_name.*=|run_id.*=.*log_metric"
+          description: Structured experiment with logging
+      moderate:
+        - pattern: "results.*dataframe.*compare|metrics.*per.*run"
+          description: Results comparison table
+        - pattern: "langsmith.*dataset.*evaluate|phoenix.*experiment"
+          description: LLM-specific experiment tracking
+      weak:
+        - pattern: "import mlflow|import wandb|from langsmith import"
+          description: Experiment tracking library import
+    journal:
+      keywords: [experiment tracking, MLflow, W&B, Weights and Biases, experiment comparison, tracking runs, experiment results]
+
+  eval.frameworks:
+    github:
+      strong:
+        - pattern: "ragas\\.evaluate|deepeval\\.evaluate|langsmith.*evaluate"
+          description: Named evaluation framework invocation
+        - pattern: "EvaluatorChain\\(|RunEvaluator\\(|evaluate_run\\("
+          description: LangSmith evaluator integration
+        - pattern: "evaluation_suite|eval.*harness|custom.*evaluator.*class"
+          description: Custom evaluation harness
+      moderate:
+        - pattern: "evaluation.*pipeline|evaluator\\s*=.*Eval"
+          description: Evaluation pipeline construction
+        - pattern: "from deepeval import|from ragas import|from phoenix import"
+          description: Evaluation framework import
+      weak:
+        - pattern: "TestCase\\(.*actual_output|assert_test\\("
+          description: DeepEval test case pattern
+    journal:
+      keywords: [RAGAS, DeepEval, LangSmith eval, evaluation framework, eval harness, evaluation suite]
+
+  eval.ab_testing:
+    github:
+      strong:
+        - pattern: "prompt_a.*prompt_b|variant_a.*variant_b|control.*treatment"
+          description: A/B variant structure in evaluation code
+        - pattern: "statistical.*significance|p_value.*eval|confidence_interval.*score"
+          description: Statistical significance testing on LLM outputs
+        - pattern: "ab_test.*prompt|experiment.*variants.*llm"
+          description: Named A/B test for LLM components
+      moderate:
+        - pattern: "compare.*prompts|prompt.*variant.*eval"
+          description: Prompt variant comparison
+        - pattern: "sample_size.*eval|power.*analysis.*llm"
+          description: Sample size / power analysis for eval
+      weak:
+        - pattern: "variant.*prompt|prompt.*comparison.*score"
+          description: Variant comparison scoring
+    journal:
+      keywords: [A/B testing, prompt variants, statistical significance, control group, treatment group, LLM experiment]
+
+  agents.tool_use:
+    github:
+      strong:
+        - pattern: "@tool\\b|StructuredTool\\.from_function|tool_definitions\\s*="
+          description: Explicit tool definition or decorator
+        - pattern: "function_calling|tool_choice.*=|parallel_tool_use"
+          description: Function calling API configuration
+        - pattern: "\"name\".*\"description\".*\"parameters\".*\"type\".*\"object\""
+          description: JSON function schema definition
+      moderate:
+        - pattern: "tool_call.*=|tool_result.*=|ToolMessage\\("
+          description: Tool call/result handling in agent loop
+        - pattern: "invoke_tool\\(|execute_tool\\(|run_tool\\("
+          description: Explicit tool invocation
+      weak:
+        - pattern: "from langchain.*tools import|from anthropic.*tool"
+          description: Tool framework import
+    journal:
+      keywords: [tool use, function calling, tool definition, tool schema, tool invocation, tool calling, function tools]
+
+  agents.single_agent:
+    github:
+      strong:
+        - pattern: "AgentExecutor\\(|create_react_agent\\("
+          description: LangChain agent executor
+        - pattern: "StateGraph\\(|graph\\.add_node.*agent|langgraph.*agent"
+          description: LangGraph single agent definition
+        - pattern: "agent_loop|agent_run\\.py|run_agent\\.py"
+          description: Named agent execution module
+          file_scope: path_only
+      moderate:
+        - pattern: "while.*tool_calls|while.*not.*finished.*agent"
+          description: Explicit agent loop in code
+        - pattern: "agent\\.invoke\\(|agent\\.run\\(|agent\\.stream\\("
+          description: Agent invocation call
+      weak:
+        - pattern: "from langgraph import|from langchain.*agents import"
+          description: Agent framework import
+    journal:
+      keywords: [agent, single agent, agent loop, ReAct, tool agent, autonomous agent, LangGraph agent]
+
+  agents.decomposition:
+    github:
+      strong:
+        - pattern: "def\\s+decompose_task|TaskDecomposer\\(|SubtaskAgent\\("
+          description: Task decomposition function or class
+        - pattern: "PlanAndExecute\\(|plan_and_execute\\("
+          description: Plan-and-execute agent instantiation
+        - pattern: "planner_agent.*executor_agent|planner.*\\.invoke.*executor"
+          description: Planner-executor agent pattern
+      moderate:
+        - pattern: "subtasks\\s*=.*\\[|task_list\\s*=.*plan"
+          description: Subtask list assignment from planner
+        - pattern: "hierarchical.*agent|dependency.*task.*graph"
+          description: Hierarchical task structure
+      weak:
+        - pattern: "task_decomposition\\s*=|decompose_task\\("
+          description: Task decomposition variable or function call
+    journal:
+      keywords: [task decomposition, task planning, subtasks, plan and execute, hierarchical planning, agent planning]
+
+  agents.multi_agent:
+    github:
+      strong:
+        - pattern: "supervisor.*agent|orchestrator.*worker|handoff_to\\("
+          description: Supervisor/worker multi-agent architecture
+        - pattern: "CrewAI|AutoGen|multi_agent.*workflow"
+          description: Multi-agent framework
+        - pattern: "agent.*swarm|crew.*=.*Crew\\("
+          description: Agent crew or swarm definition
+      moderate:
+        - pattern: "agent.*coordinate|agent.*handoff|route.*to.*agent"
+          description: Agent coordination or routing
+        - pattern: "parallel.*agent.*run|concurrent.*agents"
+          description: Parallel agent execution
+      weak:
+        - pattern: "from crewai import|from autogen import|import autogen"
+          description: Multi-agent framework import
+    journal:
+      keywords: [multi-agent, supervisor agent, agent swarm, CrewAI, AutoGen, agent orchestration, agent routing]
+
+  agents.error_handling:
+    github:
+      strong:
+        - pattern: "max_iterations.*agent|agent.*timeout|retry.*agent.*loop"
+          description: Agent iteration limits or retry logic
+        - pattern: "AgentFinish|handle_parsing_error|fallback.*agent"
+          description: Agent completion and fallback handling
+        - pattern: "stuck.*detection|loop.*detection|agent.*recovery"
+          description: Stuck/loop detection in agents
+      moderate:
+        - pattern: "except.*ToolException|try.*agent.*invoke"
+          description: Error handling in agent tool execution
+        - pattern: "agent.*retry|exponential.*backoff.*agent"
+          description: Retry logic in agent context
+      weak:
+        - pattern: "max_retries.*agent|agent.*error.*handle"
+          description: Agent-scoped retry configuration
+    journal:
+      keywords: [agent error handling, retry logic, fallback, stuck agent, agent recovery, error recovery, max iterations]
+
+  agents.hitl:
+    github:
+      strong:
+        - pattern: "interrupt.*agent|approval.*gate|human.*approval.*required"
+          description: Human approval checkpoint in agent flow
+        - pattern: "interrupt_before|interrupt_after|breakpoint.*graph"
+          description: LangGraph interrupt patterns
+        - pattern: "confirm.*action.*agent|user.*confirmation.*required"
+          description: User confirmation step in agent
+      moderate:
+        - pattern: "human_in_loop|hitl|human.*feedback.*agent"
+          description: HITL pattern reference
+        - pattern: "await.*human.*input|wait.*approval"
+          description: Awaiting human input in flow
+      weak:
+        - pattern: "human_approval|require_confirmation"
+          description: Human approval variable
+    journal:
+      keywords: [human in the loop, HITL, approval gate, human approval, interrupt, confirmation step, human oversight]
+
+  memory.conversation:
+    github:
+      strong:
+        - pattern: "ConversationBufferMemory\\(|ConversationSummaryMemory\\("
+          description: Named conversation memory class
+        - pattern: "chat_history\\s*=\\s*\\[|add_message.*chat_history"
+          description: Chat history list management
+        - pattern: "BaseChatMessageHistory|InMemoryChatMessageHistory"
+          description: Chat history base class
+      moderate:
+        - pattern: "conversation_history|message.*history.*append"
+          description: Conversation history management
+        - pattern: "load_memory_variables|save_context.*memory"
+          description: LangChain memory interface
+      weak:
+        - pattern: "from langchain.*memory import|RunnableWithMessageHistory"
+          description: Conversation memory import
+    journal:
+      keywords: [conversation memory, chat history, message history, conversation buffer, memory management]
+
+  memory.episodic:
+    github:
+      strong:
+        - pattern: "long_term_memory|episodic_memory|user_memory.*persist"
+          description: Long-term or episodic memory design
+        - pattern: "memory.*across.*session|cross.*session.*memory|session.*store.*persist"
+          description: Cross-session memory persistence
+      moderate:
+        - pattern: "user_profile.*memory|persistent.*user.*memory"
+          description: User-level persistent memory
+        - pattern: "memory.*db.*user|store.*remember.*user"
+          description: Database-backed user memory
+      weak:
+        - pattern: "episodic_store|long_term_store"
+          description: Named long-term memory store
+    journal:
+      keywords: [long-term memory, episodic memory, persistent memory, cross-session, remember across sessions]
+
+  memory.external:
+    github:
+      strong:
+        - pattern: "redis.*memory|postgres.*memory|memory.*vectorstore.*persist"
+          description: External store as memory backend
+        - pattern: "ZepMemory\\(|MotorheadMemory\\(|mem0.*memory"
+          description: Named external memory service
+        - pattern: "memory_store.*redis|memory.*backend.*=.*redis"
+          description: Redis-backed memory configuration
+      moderate:
+        - pattern: "external.*memory.*store|database.*backed.*memory"
+          description: Database-backed memory pattern
+        - pattern: "redis\\.set.*memory|redis\\.get.*memory"
+          description: Redis memory operations
+      weak:
+        - pattern: "from mem0 import|import mem0|from zep_python import"
+          description: External memory service import
+    journal:
+      keywords: [external memory, Redis memory, database memory, Zep, memory backend, memory store]
+
+  memory.retrieval:
+    github:
+      strong:
+        - pattern: "retrieve.*memory|memory.*similarity_search|semantic.*memory.*search"
+          description: Semantic retrieval from memory store
+        - pattern: "relevant_memories|fetch_memories\\(|query_memory\\("
+          description: Memory query function
+      moderate:
+        - pattern: "memory.*search\\(|search.*memory_store"
+          description: Memory store search call
+        - pattern: "memory.*embed.*query|embed.*memory.*retriev"
+          description: Embedding-based memory retrieval
+      weak:
+        - pattern: "get_relevant_memories|recall_context"
+          description: Memory retrieval function name
+    journal:
+      keywords: [memory retrieval, retrieve memory, semantic memory search, contextual memory, relevant memories]
+
+  memory.management:
+    github:
+      strong:
+        - pattern: "summarize_memory|memory_compression|prune.*memory"
+          description: Memory compression or pruning
+        - pattern: "memory.*expiry|memory.*ttl|expire.*memory"
+          description: Memory expiration logic
+      moderate:
+        - pattern: "manage_memory|clean_memory|memory.*window.*size"
+          description: Memory management pattern
+        - pattern: "memory.*summarize|compress.*history"
+          description: History compression
+      weak:
+        - pattern: "memory_limit\\s*=|max_memory_items"
+          description: Memory size constraint configuration
+    journal:
+      keywords: [memory compression, memory summarization, prune memory, memory expiry, memory hygiene]
+
+  mcp.concepts:
+    github:
+      strong:
+        - pattern: "mcp.*server|model.context.protocol|FastMCP\\("
+          description: MCP server usage or instantiation
+        - pattern: "@mcp\\.tool|mcp\\.tool.*decorator"
+          description: MCP tool registration
+          file_scope: path_only
+      moderate:
+        - pattern: "mcp.*client|connect.*mcp|MCPClient\\("
+          description: MCP client usage
+      weak:
+        - pattern: "from mcp import|import mcp|from fastmcp import"
+          description: MCP library import
+    journal:
+      keywords: [MCP, model context protocol, MCP server, MCP tool, tool protocol, FastMCP]
+
+  mcp.building:
+    github:
+      strong:
+        - pattern: "FastMCP\\(|mcp\\s*=\\s*FastMCP|app\\s*=\\s*FastMCP"
+          description: MCP server instance creation
+        - pattern: "mcp_server\\.py|server\\.py.*mcp"
+          description: Dedicated MCP server file
+          file_scope: path_only
+        - pattern: "@mcp\\.resource|@mcp\\.prompt"
+          description: MCP resource or prompt registration
+      moderate:
+        - pattern: "@mcp\\.tool\\s*\\ndef|def.*mcp.*tool"
+          description: MCP tool function definition
+        - pattern: "mcp\\.run\\(|asyncio.*mcp.*serve"
+          description: MCP server run call
+      weak:
+        - pattern: "from fastmcp import FastMCP|from mcp.server import"
+          description: MCP server library import
+    journal:
+      keywords: [built MCP server, MCP tool definition, FastMCP, MCP server implementation, "@mcp.tool"]
+
+  mcp.integrations:
+    github:
+      strong:
+        - pattern: "mcp.*postgres|mcp.*sqlite|mcp.*github|mcp.*filesystem"
+          description: Named external system MCP integration
+        - pattern: "database.*mcp.*tool|filesystem.*mcp.*server"
+          description: External system connected via MCP
+      moderate:
+        - pattern: "external.*tool.*mcp|mcp.*integration"
+          description: External integration via MCP
+        - pattern: "mcp.*connect.*database|mcp.*api.*integration"
+          description: MCP external API connection
+      weak:
+        - pattern: "mcp.*connect|mcp.*external"
+          description: MCP external connection reference
+    journal:
+      keywords: [MCP integration, MCP database, MCP filesystem, MCP API, external tool via MCP]
+
+  mcp.production:
+    github:
+      strong:
+        - pattern: "mcp.*auth|mcp.*oauth|authenticate.*mcp"
+          description: MCP authentication implementation
+        - pattern: "mcp.*rate_limit|mcp.*error.*handle|mcp.*retry"
+          description: Production MCP reliability patterns
+        - pattern: "mcp.*deploy|docker.*mcp|kubernetes.*mcp"
+          description: MCP server deployment configuration
+      moderate:
+        - pattern: "mcp.*logging|mcp.*monitor|mcp.*health"
+          description: MCP observability
+        - pattern: "mcp.*timeout|mcp.*circuit_breaker"
+          description: MCP resilience patterns
+      weak:
+        - pattern: "mcp.*production|prod.*mcp"
+          description: Production MCP reference
+    journal:
+      keywords: [MCP production, MCP authentication, MCP deployment, MCP reliability, production MCP server]
+
+  deployment.api:
+    github:
+      strong:
+        - pattern: "from fastapi import FastAPI|app\\s*=\\s*FastAPI\\("
+          description: FastAPI application definition
+        - pattern: "StreamingResponse\\(|stream=True.*generate"
+          description: Streaming API endpoint
+        - pattern: "@app\\.post.*generate|@router\\.post.*chat|@app\\.post.*complete"
+          description: Named AI API endpoint
+      moderate:
+        - pattern: "@app\\.route|@router\\.post|APIRouter\\("
+          description: API route definition
+        - pattern: "uvicorn\\.run|gunicorn.*app"
+          description: ASGI/WSGI server configuration
+      weak:
+        - pattern: "from fastapi import|from flask import"
+          description: Web framework import
+    journal:
+      keywords: [FastAPI, Flask, API, REST endpoint, streaming response, web server, API design, serve model]
+
+  deployment.containers:
+    github:
+      strong:
+        - pattern: "Dockerfile"
+          description: Dockerfile present in project
+          file_scope: path_only
+        - pattern: "docker-compose\\.yml|docker-compose\\.yaml"
+          description: Docker Compose configuration
+          file_scope: path_only
+        - pattern: "FROM python.*\\nRUN pip|FROM python.*\\nCOPY"
+          description: Python Dockerfile with install step
+      moderate:
+        - pattern: "docker.*build.*-t|docker.*run.*-p"
+          description: Docker build/run commands in scripts
+        - pattern: "\\.dockerignore"
+          description: Docker ignore file
+          file_scope: path_only
+      # no contextual level — Dockerfile presence is sufficient alone (infrastructure skill)
+    journal:
+      keywords: [Docker, containerization, container, docker-compose, image build, Dockerfile]
+
+  deployment.cicd:
+    github:
+      strong:
+        - pattern: "\\.github/workflows/.*\\.yml"
+          description: GitHub Actions workflow file
+          file_scope: path_only
+        - pattern: "jobs:.*deploy|steps:.*pytest.*deploy"
+          description: CI/CD pipeline with deploy step
+        - pattern: "on:\\s*(push|pull_request)"
+          description: CI trigger configuration
+      moderate:
+        - pattern: "pytest.*--cov|flake8.*ci|ruff.*check.*ci"
+          description: Test/lint automation in CI context
+        - pattern: "matrix:.*python-version|strategy:.*matrix"
+          description: Test matrix configuration
+      weak:
+        - pattern: "uses: actions/checkout|uses: actions/setup-python"
+          description: GitHub Actions step reference
+    journal:
+      keywords: [CI/CD, GitHub Actions, pipeline, continuous deployment, automated deploy, workflow]
+
+  deployment.latency:
+    github:
+      strong:
+        - pattern: "async.*llm.*invoke|asyncio.*generate.*stream|streaming.*latency"
+          description: Async or streaming LLM calls for latency
+        - pattern: "semantic.*cache|redis.*cache.*llm|cache.*response.*llm"
+          description: LLM response caching
+        - pattern: "batch.*inference|batch.*requests.*llm"
+          description: Request batching for LLM
+      moderate:
+        - pattern: "latency.*optimization|p99.*response|response.*time.*sla"
+          description: Latency measurement with targets
+        - pattern: "llm.*timeout\\s*=|timeout.*generate"
+          description: LLM call timeout configuration
+      weak:
+        - pattern: "from langchain.*cache import|GPTCache|semantic_cache"
+          description: LLM cache library import
+    journal:
+      keywords: [latency, streaming, caching, response time, async, batching, optimization]
+
+  deployment.cost:
+    github:
+      strong:
+        - pattern: "token.*budget\\s*=|cost.*per.*request|cost.*tracking.*llm"
+          description: Token budget or cost tracking implementation
+        - pattern: "fallback.*cheaper.*model|model.*selection.*cost|cost.*aware.*model"
+          description: Cost-aware model selection logic
+      moderate:
+        - pattern: "usage\\.total_tokens|prompt_tokens.*completion_tokens"
+          description: Token usage extraction from API response
+        - pattern: "cost.*estimate.*=|calculate_cost\\("
+          description: Cost estimation function
+      weak:
+        - pattern: "max_tokens\\s*=.*budget|token.*limit.*cost"
+          description: Token limit as cost control
+    journal:
+      keywords: [cost management, token budget, cost tracking, cost optimization, model selection cost]
+
+  deployment.infra:
+    github:
+      strong:
+        - pattern: "kubernetes.*llm|k8s.*deploy.*llm|helm.*chart.*llm"
+          description: Kubernetes deployment for LLM service
+        - pattern: "terraform.*llm|pulumi.*llm.*stack"
+          description: Infrastructure-as-code for LLM service
+        - pattern: "auto.*scaling.*llm|load.*balancer.*llm"
+          description: LLM service scaling configuration
+      moderate:
+        - pattern: "replicas:\\s*\\d|deployment\\.yaml.*llm"
+          description: Kubernetes replicas or deployment manifest
+        - pattern: "cloud.*run.*llm|lambda.*llm.*function"
+          description: Serverless LLM deployment
+      weak:
+        - pattern: "deploy.*to.*cloud|cloud.*deployment.*llm"
+          description: Cloud deployment reference for LLM
+    journal:
+      keywords: [infrastructure, Kubernetes, Terraform, cloud deployment, scaling, production infrastructure, IaC]
+
+  observability.tracing:
+    github:
+      strong:
+        - pattern: "LANGCHAIN_TRACING_V2\\s*=|langsmith\\.Client\\("
+          description: LangSmith tracing setup
+        - pattern: "arize.*phoenix|phoenix\\.trace|opentelemetry.*llm"
+          description: Arize/Phoenix/OpenTelemetry LLM tracing
+        - pattern: "weave\\.init\\(|wandb\\.trace"
+          description: W&B Weave tracing initialization
+      moderate:
+        - pattern: "@traceable|with_config.*run_name"
+          description: LangSmith traceable decorator or run naming
+        - pattern: "tracer\\s*=.*llm|trace_id.*llm|span.*llm"
+          description: LLM-specific tracing spans
+      weak:
+        - pattern: "from langsmith import|import langsmith|LANGCHAIN_API_KEY"
+          description: LangSmith import or config
+    journal:
+      keywords: [LangSmith, tracing, observability, Arize, Phoenix, Weave, trace, span, LLM tracing]
+
+  observability.cost:
+    github:
+      strong:
+        - pattern: "usage\\.total_tokens.*cost|token.*cost.*log|cost.*per.*call.*log"
+          description: Token cost logging with calculation
+        - pattern: "cost.*dashboard|token.*budget.*alert|cost.*monitor"
+          description: Cost monitoring or alerting setup
+      moderate:
+        - pattern: "usage\\.total_tokens|prompt_tokens.*\\+.*completion_tokens"
+          description: Token count extraction for cost
+        - pattern: "tokens_used.*cost|total_cost.*=.*tokens"
+          description: Cost calculation from token count
+      weak:
+        - pattern: "anthropic_usage|openai_usage|usage\\.input_tokens"
+          description: API usage object access
+    journal:
+      keywords: [cost monitoring, token monitoring, cost per call, token budget, cost alert, usage tracking]
+
+  observability.quality:
+    github:
+      strong:
+        - pattern: "production.*eval|online.*eval|eval.*prod.*score"
+          description: Production evaluation pipeline
+        - pattern: "quality.*monitor.*llm|drift.*detection.*llm"
+          description: Quality drift monitoring for LLM
+        - pattern: "feedback.*score.*prod|thumbs.*up.*down.*llm"
+          description: User feedback collection in production
+      moderate:
+        - pattern: "feedback.*loop.*prod|user.*rating.*llm"
+          description: Production feedback loop
+        - pattern: "quality.*threshold.*alert|score.*below.*threshold"
+          description: Quality threshold alerting
+      weak:
+        - pattern: "production_eval|quality_monitor"
+          description: Production quality variable name
+    journal:
+      keywords: [production evaluation, quality monitoring, drift detection, online eval, production feedback]
+
+  observability.logging:
+    github:
+      strong:
+        - pattern: "structlog\\.configure|structlog\\.get_logger"
+          description: Structlog structured logging setup
+        - pattern: "correlation_id.*log|trace_id.*log|request_id.*json.*log"
+          description: Correlation IDs in structured logs
+        - pattern: "json.*formatter.*log|logging.*json.*format.*llm"
+          description: JSON log format for LLM service
+      moderate:
+        - pattern: "log\\.bind\\(|log\\.info.*extra=|logging.*extra.*dict"
+          description: Structured log fields
+        - pattern: "llm.*request.*log|llm.*response.*log"
+          description: LLM request/response logging
+      weak:
+        - pattern: "import structlog|from structlog import"
+          description: Structlog import
+    journal:
+      keywords: [structured logging, log format, correlation ID, JSON logs, logging setup, log aggregation]
+
+  observability.debugging:
+    github:
+      strong:
+        - pattern: "replay.*trace|trace.*inspect.*llm|debug.*trace.*llm"
+          description: LLM trace-based debugging
+        - pattern: "prompt.*forensics|token.*debug.*output|failure.*analysis.*llm"
+          description: LLM-specific debugging tooling
+      moderate:
+        - pattern: "debug.*agent.*output|inspect.*llm.*response"
+          description: LLM output inspection
+        - pattern: "langsmith.*debug|phoenix.*debug.*trace"
+          description: LLM observability platform for debugging
+      weak:
+        - pattern: "llm.*debug|debug.*prompt.*output"
+          description: LLM debugging reference
+    journal:
+
+  # ── Foundation skills ───────────────────────────────────────────────────────
+  # Patterns for general software engineering, cloud, and frontend evidence.
+  # Trust tiers apply normally: .php, .rb, .go are semi_trusted (arch+behavioral
+  # only); .sh is semi_trusted; .yaml/.toml/.tf are trusted.
+  # These patterns intentionally avoid AI/ML terms so they don't inflate AI skills.
+
+  foundation.testing:
+    github:
+      strong:
+        - pattern: "def test_|class Test.*:|@pytest\\.fixture|pytest\\.mark\\."
+          description: pytest test functions or fixtures
+        - pattern: "describe\\(['\"]|it\\(['\"].*=>|beforeEach\\(|afterEach\\("
+          description: Jest/Mocha/Jasmine test blocks
+        - pattern: "\\bPHPUnit\\\\|extends TestCase|public function test"
+          description: PHPUnit test class
+        - pattern: "tests?/.*\\.py|spec/.*\\.rb|__tests__/|test_.*\\.php"
+          description: Test file path conventions
+          file_scope: path_only
+      moderate:
+        - pattern: "assertEqual|assertRaises|assert_called_with|assert_equal"
+          description: Test assertions
+        - pattern: "mock\\.patch|MagicMock\\(|mocker\\.patch|sinon\\.stub"
+          description: Mocking in tests
+        - pattern: "\\.toEqual\\(|\\.toBe\\(|\\.toHaveBeenCalled"
+          description: Jest/Jasmine matchers
+
+  foundation.code_quality:
+    github:
+      strong:
+        - pattern: "\\.github/workflows/.*\\.(yml|yaml)"
+          description: GitHub Actions workflow file path
+          file_scope: path_only
+        - pattern: "on:\\s*\\n.*push:|jobs:\\s*\\n|runs-on:"
+          description: GitHub Actions workflow structure
+        - pattern: "\\.gitlab-ci\\.yml|Jenkinsfile|CircleCI|bitbucket-pipelines"
+          description: CI/CD pipeline config file
+          file_scope: path_only
+      moderate:
+        - pattern: "ruff|flake8|eslint|pylint|rubocop|phpcs"
+          description: Linter usage
+        - pattern: "mypy|pyright|tsc --noEmit|phpstan|psalm"
+          description: Type checker usage
+        - pattern: "black --check|prettier --check|gofmt"
+          description: Formatter check in CI
+
+  foundation.backend:
+    github:
+      strong:
+        - pattern: "@app\\.route|@router\\.|app\\.get\\(|app\\.post\\(|app\\.put\\("
+          description: REST route definitions (Flask/FastAPI/Express)
+        - pattern: "session_start\\(|\\$_POST\\[|\\$_GET\\[|\\$_FILES\\["
+          description: PHP server-side request handling
+        - pattern: "require.*vendor/autoload|use Aws\\\\|use Laravel\\\\"
+          description: PHP Composer autoload / framework import
+        - pattern: "func\\s+\\w+.*http\\.ResponseWriter|func\\s+\\w+.*gin\\.Context"
+          description: Go HTTP handler
+      moderate:
+        - pattern: "\\$_POST\\['|\\$_GET\\['|header\\('Content-Type|json_encode\\("
+          description: PHP HTTP response/request handling
+        - pattern: "request\\.json\\(|request\\.form\\[|jsonify\\("
+          description: Flask request parsing
+        - pattern: "res\\.json\\(|req\\.body\\.|res\\.status\\("
+          description: Express.js response patterns
+
+  foundation.databases:
+    github:
+      strong:
+        - pattern: "mysqli_connect\\(|new PDO\\(|\\$link\\s*=.*connect"
+          description: PHP database connection
+        - pattern: "INSERT INTO|SELECT.*FROM.*WHERE|CREATE TABLE|ALTER TABLE"
+          description: SQL statements in code
+        - pattern: "db\\.execute\\(|cursor\\.execute\\(|session\\.query\\("
+          description: Database query execution (Python ORM / raw)
+        - pattern: "aws rds|RdsClient|rds\\.describeDBInstances"
+          description: AWS RDS API usage
+      moderate:
+        - pattern: "prepare\\(.*sql|bind_param\\(|stmt\\.execute\\("
+          description: Prepared statements (SQL injection prevention)
+        - pattern: "mysqli_query\\(|mysqli_fetch_assoc\\(|mysqli_num_rows"
+          description: PHP MySQL functions
+        - pattern: "createEngine\\(|sessionmaker\\(|Base\\.metadata\\.create_all"
+          description: SQLAlchemy ORM setup
+
+  foundation.cloud_services:
+    github:
+      strong:
+        - pattern: "boto3\\.client\\(|boto3\\.resource\\(|import boto3"
+          description: AWS boto3 SDK import/usage
+        - pattern: "Aws\\\\S3\\\\S3Client|Aws\\\\Sns\\\\SnsClient|Aws\\\\Rds\\\\RdsClient|Aws\\\\Ec2"
+          description: PHP AWS SDK class usage
+        - pattern: "aws\\s+(s3|ec2|rds|sns|elb|lambda|iam|cloudwatch|autoscaling)\\s+"
+          description: AWS CLI command
+        - pattern: "google\\.cloud\\.|from google\\.cloud import|@google-cloud/"
+          description: GCP SDK usage
+        - pattern: "DefaultAzureCredential|azure\\.storage|azure\\.identity"
+          description: Azure SDK usage
+      moderate:
+        - pattern: "s3\\.createBucket|s3\\.putObject|s3\\.getObject|createBucket\\("
+          description: S3 bucket operations
+        - pattern: "ec2\\.terminate-instances|ec2\\.run-instances|describe-instances"
+          description: EC2 instance management
+        - pattern: "SnsClient.*factory|createTopic|sns\\.subscribe|sns create-topic"
+          description: SNS topic and subscription
+        - pattern: "elb.*describe-load-balancers|autoscaling.*describe"
+          description: ELB/autoscaling management
+
+  foundation.containers:
+    github:
+      strong:
+        - pattern: "^FROM\\s+\\w|^RUN\\s+|^CMD\\s+|^ENTRYPOINT\\s+"
+          description: Dockerfile instructions
+        - pattern: "Dockerfile$|docker-compose\\.yml$|docker-compose\\.yaml$"
+          description: Docker config file path
+          file_scope: path_only
+        - pattern: "services:\\s*\\n.*image:|version:\\s*['\"]?[23]"
+          description: docker-compose service definitions
+      moderate:
+        - pattern: "docker build|docker run|docker push|docker pull"
+          description: Docker CLI commands
+        - pattern: "EXPOSE\\s+\\d+|ENV\\s+\\w+|WORKDIR\\s+/"
+          description: Dockerfile environment setup
+
+  foundation.frontend:
+    github:
+      strong:
+        - pattern: "<!DOCTYPE html>|<html.*lang=|<head>.*<title>"
+          description: HTML document structure
+        - pattern: "import React|from 'react'|from \"react\""
+          description: React import
+        - pattern: "import.*from 'vue'|createApp\\(|Vue\\.component\\("
+          description: Vue.js usage
+      moderate:
+        - pattern: "\\$\\(document\\)\\.ready|\\$\\('#|\\$\\('\\.|\\.on\\('click"
+          description: jQuery DOM manipulation
+        - pattern: "<form.*action=|<input.*type=|<button.*type="
+          description: HTML form elements
+        - pattern: "fetch\\(|axios\\.|XMLHttpRequest|\\$\\.ajax\\("
+          description: Frontend HTTP requests
+      keywords: [production debugging, trace inspection, failure analysis, debug LLM, trace replay, root cause]
