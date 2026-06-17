@@ -1067,11 +1067,170 @@ def run(repo_path: str, learner_id: str | None, no_module: bool) -> None:
 def _skill_name(skill_id: str) -> str:
     """Resolve skill_id to display name."""
     from . import _data
-    for dom in _data.skills()["domains"]:
+    for dom in _data.skills()["domains"] + _data.skills().get("foundation_domains", []):
         for sub in dom["sub_skills"]:
             if sub["id"] == skill_id:
                 return sub["name"]
     return skill_id
+
+
+# ── compass analyze ───────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("repo_path", default=".", metavar="REPO", type=click.Path(exists=True, file_okay=False))
+@click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
+def analyze(repo_path: str, learner_id: str | None) -> None:
+    """Run LLM deep assessment on a repo and store the results.
+
+    REPO defaults to the current directory. Results are stored separately
+    from deterministic scan signals and do not affect skill scores.
+    Use `compass explain` to view the assessment.
+    """
+    import time
+    from pathlib import Path as _Path
+    from .evidence.llm_assessor import assess_repo
+    from .memory.store import load_state, save_state
+
+    lid = resolve_learner_id(learner_id)
+    state = load_state(lid)
+    if state is None:
+        console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    repo = _Path(repo_path).resolve()
+    console.print()
+    console.print(Panel.fit(
+        f"LLM Deep Assessment\n[dim]{repo}[/dim]",
+        style="blue",
+    ))
+    console.print()
+
+    t0 = time.time()
+    with console.status("Analyzing repo with LLM…"):
+        result = assess_repo(repo)
+    elapsed = time.time() - t0
+
+    if result.error:
+        if result.error == "no_api_key":
+            console.print(
+                "[yellow]No API key found.[/yellow] Set [bold]ANTHROPIC_API_KEY[/bold] in your .env file."
+            )
+        else:
+            console.print(f"[red]Assessment failed:[/red] {result.error}")
+        return
+
+    # Replace any existing assessment for this repo
+    state.llm_assessments = [a for a in state.llm_assessments if a.repo_name != result.repo_name]
+    state.llm_assessments.append(result)
+    save_state(state)
+
+    console.print(f"[green]✓[/green] Assessment complete in [bold]{elapsed:.1f}s[/bold]  "
+                  f"·  [bold]{len(result.skills)}[/bold] skills assessed  "
+                  f"·  model: [dim]{result.model}[/dim]")
+    console.print()
+
+    if result.repo_summary:
+        console.print(Panel(result.repo_summary, title="Repo Summary", title_align="left", expand=False))
+        console.print()
+
+    if not result.skills:
+        console.print("[yellow]No skills assessed.[/yellow]")
+        return
+
+    _print_llm_assessment(result, state)
+    console.print()
+    console.print("[dim]Run [bold]compass explain[/bold] to see LLM assessments alongside deterministic scores.[/dim]")
+
+
+# ── compass explain ───────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
+@click.option("--repo", default=None, help="Filter to a specific repo name.")
+def explain(learner_id: str | None, repo: str | None) -> None:
+    """Show LLM assessments alongside deterministic skill scores.
+
+    Displays what the LLM inferred from each analyzed repo, the evidence type
+    (current / historical / inferred), and how it compares to deterministic scores.
+    """
+    from .memory.store import load_state
+
+    lid = resolve_learner_id(learner_id)
+    state = load_state(lid)
+    if state is None:
+        console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    assessments = state.llm_assessments
+    if repo:
+        assessments = [a for a in assessments if a.repo_name == repo]
+
+    if not assessments:
+        console.print()
+        if repo:
+            console.print(f"[yellow]No LLM assessment found for repo '{repo}'.[/yellow]")
+        else:
+            console.print("[yellow]No LLM assessments found.[/yellow]")
+        console.print("[dim]Run [bold]compass analyze <repo_path>[/bold] first.[/dim]")
+        return
+
+    console.print()
+    for assessment in assessments:
+        assessed_date = assessment.assessed_at.strftime("%Y-%m-%d")
+        console.print(Panel(
+            f"{assessment.repo_summary or 'No summary.'}\n\n"
+            f"[dim]Assessed {assessed_date}  ·  {assessment.model}[/dim]",
+            title=f"LLM Assessment: {assessment.repo_name}",
+            title_align="left",
+            style="blue",
+            expand=False,
+        ))
+        console.print()
+        _print_llm_assessment(assessment, state)
+        console.print()
+
+
+def _print_llm_assessment(assessment, state: LearnerState) -> None:
+    """Print a table of LLM-assessed skills with deterministic scores alongside."""
+    etype_style = {
+        "current_demonstrated": "green",
+        "historical_experience": "yellow",
+        "inferred_exposure": "dim",
+    }
+    etype_label = {
+        "current_demonstrated": "current",
+        "historical_experience": "historical",
+        "inferred_exposure": "inferred",
+    }
+
+    # Sort: current first, then historical, then inferred; within each by confidence desc
+    order = {"current_demonstrated": 0, "historical_experience": 1, "inferred_exposure": 2}
+    sorted_skills = sorted(
+        assessment.skills,
+        key=lambda s: (order.get(s.evidence_type, 3), -s.confidence),
+    )
+
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
+    table.add_column("Skill", min_width=28)
+    table.add_column("LLM Conf.", justify="right", min_width=9)
+    table.add_column("Type", min_width=10)
+    table.add_column("Det. Score", justify="right", min_width=10)
+    table.add_column("Rationale", min_width=40)
+
+    for s in sorted_skills:
+        det = state.skill_graph.get(s.skill_id)
+        det_str = f"{det.effective_score:.2f}" if det else "—"
+        style = etype_style.get(s.evidence_type, "")
+        label = etype_label.get(s.evidence_type, s.evidence_type)
+        table.add_row(
+            _skill_name(s.skill_id),
+            f"[{style}]{s.confidence:.0%}[/{style}]",
+            f"[{style}]{label}[/{style}]",
+            f"[dim]{det_str}[/dim]",
+            f"[dim]{s.rationale}[/dim]",
+        )
+
+    console.print(table)
 
 
 def _print_milestone_status(state: LearnerState) -> None:

@@ -109,6 +109,22 @@ class Milestone(BaseModel):
     completed_at: Optional[datetime] = None
 
 
+class LLMSkillAssessment(BaseModel):
+    skill_id: str
+    confidence: float
+    evidence_type: Literal["current_demonstrated", "historical_experience", "inferred_exposure"]
+    rationale: str
+
+
+class LLMRepoAssessment(BaseModel):
+    repo_name: str
+    assessed_at: datetime = Field(default_factory=_now)
+    skills: list[LLMSkillAssessment] = Field(default_factory=list)
+    repo_summary: str = ""
+    model: str = ""
+    error: Optional[str] = None
+
+
 class GitHubCache(BaseModel):
     last_scan: datetime = Field(default_factory=_now)
     repos: list[str] = Field(default_factory=list)
@@ -161,6 +177,7 @@ class LearnerState(BaseModel):
     github_cache: Optional[GitHubCache] = None
     overrides: list[Override] = Field(default_factory=list)
     modules: dict[str, CurriculumModule] = Field(default_factory=dict)
+    llm_assessments: list[LLMRepoAssessment] = Field(default_factory=list)
 
     @property
     def is_new_learner(self) -> bool:
