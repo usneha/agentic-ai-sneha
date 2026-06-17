@@ -14,10 +14,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import anthropic
+import openai
 
 from .._data import foundation_domains, skill_metadata
-from ..config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+from ..config import OPENAI_API_KEY, OPENAI_MODEL
 from ..models import LLMRepoAssessment, LLMSkillAssessment
 
 MAX_README_CHARS = 3_000
@@ -183,7 +183,7 @@ def assess_repo(repo_path: Path) -> LLMRepoAssessment:
     repo_path = repo_path.resolve()
     repo_name = repo_path.name
 
-    if not ANTHROPIC_API_KEY:
+    if not OPENAI_API_KEY:
         return LLMRepoAssessment(repo_name=repo_name, error="no_api_key")
 
     ctx = _build_context(repo_path)
@@ -196,13 +196,13 @@ def assess_repo(repo_path: Path) -> LLMRepoAssessment:
     }
 
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model=ANTHROPIC_MODEL,
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
             max_tokens=2_000,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text.strip()
+        raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -228,10 +228,10 @@ def assess_repo(repo_path: Path) -> LLMRepoAssessment:
             repo_name=repo_name,
             skills=skills,
             repo_summary=data.get("repo_summary", ""),
-            model=ANTHROPIC_MODEL,
+            model=OPENAI_MODEL,
         )
 
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
         return LLMRepoAssessment(repo_name=repo_name, error=f"parse_error: {exc}")
-    except anthropic.APIError as exc:
+    except openai.OpenAIError as exc:
         return LLMRepoAssessment(repo_name=repo_name, error=f"api_error: {exc}")

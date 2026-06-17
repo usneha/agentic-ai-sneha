@@ -1113,7 +1113,7 @@ def analyze(repo_path: str, learner_id: str | None) -> None:
     if result.error:
         if result.error == "no_api_key":
             console.print(
-                "[yellow]No API key found.[/yellow] Set [bold]ANTHROPIC_API_KEY[/bold] in your .env file."
+                "[yellow]No API key found.[/yellow] Set [bold]OPENAI_API_KEY[/bold] in your .env file."
             )
         else:
             console.print(f"[red]Assessment failed:[/red] {result.error}")
