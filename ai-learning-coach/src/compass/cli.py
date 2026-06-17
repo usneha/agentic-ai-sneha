@@ -67,7 +67,8 @@ def build_initial_skill_graph(background: str) -> dict[str, SkillScore]:
         base = seeded.get(skill_id, 0.0)
         graph[skill_id] = SkillScore(
             skill_id=skill_id,
-            score=0.0,
+            current_score=0.0,
+            experience_score=0.0,
             base_score=base,
             confidence="low",
             evidence_sources=[],
@@ -181,7 +182,7 @@ def init(
 
     # Pre-seed skill graph
     skill_graph = build_initial_skill_graph(background)
-    seeded_count = sum(1 for s in skill_graph.values() if s.score > 0)
+    seeded_count = sum(1 for s in skill_graph.values() if s.base_score > 0)
     total_skills = len(skill_graph)
 
     state = LearnerState(profile=profile, skill_graph=skill_graph)
@@ -305,7 +306,7 @@ def _print_domain_summary(state: LearnerState) -> None:
 
         avg = sum(s.effective_score for s in scores_in_domain) / len(scores_in_domain)
         conf = _domain_confidence(scores_in_domain)
-        evidenced = sum(1 for s in scores_in_domain if s.score > 0)
+        evidenced = sum(1 for s in scores_in_domain if s.current_score > 0)
         total = len(scores_in_domain)
 
         conf_color = _confidence_color(conf)
@@ -336,8 +337,9 @@ def _print_all_skills(state: LearnerState) -> None:
             padding=(0, 1),
         )
         table.add_column("Skill", min_width=30)
-        table.add_column("Evidence", justify="right", min_width=8)
-        table.add_column("Assumed", justify="right", min_width=8)
+        table.add_column("Current", justify="right", min_width=8)
+        table.add_column("Exp.", justify="right", min_width=6)
+        table.add_column("Prior", justify="right", min_width=6)
         table.add_column("Effective", justify="right", min_width=9)
         table.add_column("Conf.", min_width=6)
 
@@ -347,11 +349,12 @@ def _print_all_skills(state: LearnerState) -> None:
             if not s:
                 continue
             conf_color = _confidence_color(s.confidence)
-            assumed_str = f"[dim]+{s.base_score:.2f}[/dim]" if s.base_score > 0 else "[dim]—[/dim]"
+            prior_str = f"[dim]+{s.base_score:.2f}[/dim]" if s.base_score > 0 else "[dim]—[/dim]"
             table.add_row(
                 sub["name"],
-                f"{s.score:.2f}",
-                assumed_str,
+                f"{s.current_score:.2f}",
+                f"[dim]{s.experience_score:.2f}[/dim]",
+                prior_str,
                 f"{s.effective_score:.2f}",
                 f"[{conf_color}]{s.confidence}[/{conf_color}]",
             )
@@ -365,7 +368,7 @@ def _print_foundation_summary(state: LearnerState) -> None:
     fdomains = _data.foundation_domains()
     sg = state.skill_graph
     has_any = any(
-        sg.get(sub["id"]) and sg[sub["id"]].score > 0
+        sg.get(sub["id"]) and sg[sub["id"]].current_score > 0
         for d in fdomains for sub in d["sub_skills"]
     )
     if not has_any:
@@ -388,7 +391,7 @@ def _print_foundation_summary(state: LearnerState) -> None:
         for sub in fdom["sub_skills"]:
             sid = sub["id"]
             s = sg.get(sid)
-            if not s or s.score == 0:
+            if not s or s.current_score == 0:
                 continue
             credits = credit_map.get(sid, {})
             credits_str = "  ".join(
@@ -397,7 +400,7 @@ def _print_foundation_summary(state: LearnerState) -> None:
             conf_color = _confidence_color(s.confidence)
             table.add_row(
                 sub["name"],
-                f"[{conf_color}]{s.score:.2f}[/{conf_color}]",
+                f"[{conf_color}]{s.current_score:.2f}[/{conf_color}]",
                 credits_str or "—",
             )
 
@@ -446,11 +449,12 @@ def scan(repo_path: str, learner_id: str | None) -> None:
     result = scan_repo(repo)
     elapsed = time.time() - t0
 
-    # Persist raw signals in github_cache so compass assess can use them
+    # Replace old evidence for this repo and persist
+    state.evidence = [e for e in state.evidence if e.source_repo != result.repo_name]
+    state.evidence.extend(result.evidence)
     cache = state.github_cache or GitHubCache()
     if result.repo_name not in cache.repos:
         cache.repos.append(result.repo_name)
-    cache.latest_signals = result.signals
     cache.files_scanned = result.files_scanned
     cache.scan_errors = result.errors
     from .models import _now
@@ -467,22 +471,24 @@ def scan(repo_path: str, learner_id: str | None) -> None:
         console.print(f"[yellow]Warnings:[/yellow] {len(result.errors)} pattern errors (run with --verbose to see)")
 
     foundation_ids = set(_data.all_foundation_skill_ids())
-    ai_signals = [s for s in result.signals if s.skill_id not in foundation_ids]
-    foundation_signals = [s for s in result.signals if s.skill_id in foundation_ids]
+    ai_evidence = [e for e in result.evidence if e.skill_id not in foundation_ids]
+    foundation_evidence = [e for e in result.evidence if e.skill_id in foundation_ids]
 
-    if not ai_signals and not foundation_signals:
+    if not ai_evidence and not foundation_evidence:
         console.print("\n[yellow]No learning evidence found in this repo.[/yellow]")
         console.print("[dim]This may mean the repo doesn't contain AI/ML code yet, or patterns didn't match.[/dim]")
         return
 
+    level_style = {"strong": "green bold", "moderate": "yellow", "weak": "dim"}
+    level_label = {"strong": "STRONG", "moderate": "moderate", "weak": "weak"}
+
     # Foundation skills section
-    if foundation_signals:
-        level_rank = {"github_strong": 3, "github_moderate": 2, "github_weak": 1}
+    if foundation_evidence:
         best_f: dict[str, object] = {}
-        for sig in foundation_signals:
-            existing = best_f.get(sig.skill_id)
-            if existing is None or level_rank[sig.signal_type] > level_rank[existing.signal_type]:  # type: ignore[union-attr]
-                best_f[sig.skill_id] = sig
+        for ev in foundation_evidence:
+            existing = best_f.get(ev.skill_id)
+            if existing is None or ev.confidence > existing.confidence:  # type: ignore[union-attr]
+                best_f[ev.skill_id] = ev
 
         ftable = Table(
             title="Foundation Skills Detected",
@@ -492,8 +498,6 @@ def scan(repo_path: str, learner_id: str | None) -> None:
         ftable.add_column("Evidence", min_width=10)
         ftable.add_column("Credits AI Skills", min_width=30, style="dim")
 
-        level_style = {"github_strong": "green bold", "github_moderate": "yellow", "github_weak": "dim"}
-        level_label = {"github_strong": "STRONG", "github_moderate": "moderate", "github_weak": "weak"}
         credit_map = _data.foundation_credit_map()
         fmeta = {
             sub["id"]: sub["name"]
@@ -501,76 +505,69 @@ def scan(repo_path: str, learner_id: str | None) -> None:
             for sub in d["sub_skills"]
         }
 
-        for sig in sorted(best_f.values(), key=lambda s: s.skill_id):  # type: ignore[union-attr]
-            lvl = sig.signal_type  # type: ignore[union-attr]
-            credits = credit_map.get(sig.skill_id, {})  # type: ignore[union-attr]
+        for ev in sorted(best_f.values(), key=lambda e: e.skill_id):  # type: ignore[union-attr]
+            lvl = ev.level  # type: ignore[union-attr]
+            credits = credit_map.get(ev.skill_id, {})  # type: ignore[union-attr]
             credits_str = "  ".join(
                 f"{ai_id.split('.')[-1]} +{boost:.2f}"
                 for ai_id, boost in credits.items()
             )
             ftable.add_row(
-                fmeta.get(sig.skill_id, sig.skill_id),  # type: ignore[union-attr]
+                fmeta.get(ev.skill_id, ev.skill_id),  # type: ignore[union-attr]
                 f"[{level_style.get(lvl, '')}]{level_label.get(lvl, lvl)}[/{level_style.get(lvl, '')}]",
                 credits_str or "—",
             )
         console.print()
         console.print(ftable)
 
-    if not ai_signals:
+    if not ai_evidence:
         console.print(
-            f"\n[dim]{len(foundation_signals)} foundation signal(s) detected  ·  "
+            f"\n[dim]{len(foundation_evidence)} foundation evidence record(s)  ·  "
             f"0 AI skill signals  ·  Run [bold]compass assess[/bold] to apply.[/dim]"
         )
         return
 
-    # AI skills section
-    level_rank = {"github_strong": 3, "github_moderate": 2, "github_weak": 1}
+    # AI skills section — best evidence per skill
     best: dict[str, object] = {}
-    for sig in ai_signals:
-        existing = best.get(sig.skill_id)
-        if existing is None or level_rank[sig.signal_type] > level_rank[existing.signal_type]:  # type: ignore[union-attr]
-            best[sig.skill_id] = sig
+    for ev in ai_evidence:
+        existing = best.get(ev.skill_id)
+        if existing is None or ev.confidence > existing.confidence:  # type: ignore[union-attr]
+            best[ev.skill_id] = ev
 
-    # Group by domain
     domain_map = _data.skill_domain_map()
     domain_names = {d["id"]: d["name"] for d in _data.domains()}
     by_domain: dict[str, list] = {}
-    for sig in sorted(best.values(), key=lambda s: (domain_map.get(s.skill_id, ""), s.skill_id)):  # type: ignore[union-attr]
-        dom = domain_map.get(sig.skill_id, "other")  # type: ignore[union-attr]
-        by_domain.setdefault(dom, []).append(sig)
+    for ev in sorted(best.values(), key=lambda e: (domain_map.get(e.skill_id, ""), e.skill_id)):  # type: ignore[union-attr]
+        dom = domain_map.get(ev.skill_id, "other")  # type: ignore[union-attr]
+        by_domain.setdefault(dom, []).append(ev)
 
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
     table.add_column("Domain", style="bold", min_width=16)
     table.add_column("Skill", min_width=26)
     table.add_column("Best Level", min_width=8)
 
-    level_style = {"github_strong": "green bold", "github_moderate": "yellow", "github_weak": "dim"}
-    level_label = {"github_strong": "STRONG", "github_moderate": "moderate", "github_weak": "weak"}
-
-    for dom_id, sigs in by_domain.items():
+    for dom_id, evs in by_domain.items():
         first = True
-        for sig in sigs:
+        for ev in evs:
             dom_display = domain_names.get(dom_id, dom_id) if first else ""
             first = False
-            skill_name = _skill_name(sig.skill_id)  # type: ignore[union-attr]
-            lvl = sig.signal_type  # type: ignore[union-attr]
+            lvl = ev.level  # type: ignore[union-attr]
             table.add_row(
                 dom_display,
-                skill_name,
+                _skill_name(ev.skill_id),  # type: ignore[union-attr]
                 f"[{level_style.get(lvl, '')}]{level_label.get(lvl, lvl)}[/{level_style.get(lvl, '')}]",
             )
 
     console.print()
     console.print(table)
 
-    ai_signal_set = set(ai_signals)
-    strong = len({s.skill_id for s in ai_signals if s.signal_type == "github_strong"})
-    moderate_set = {s.skill_id for s in ai_signals if s.signal_type == "github_moderate"}
-    strong_set = {s.skill_id for s in ai_signals if s.signal_type == "github_strong"}
-    weak_set = {s.skill_id for s in ai_signals if s.signal_type == "github_weak"}
-    moderate = len(moderate_set - strong_set)
-    weak = len(weak_set - moderate_set - strong_set)
+    strong_skills = {e.skill_id for e in ai_evidence if e.level == "strong"}
+    moderate_skills = {e.skill_id for e in ai_evidence if e.level == "moderate"}
+    weak_skills = {e.skill_id for e in ai_evidence if e.level == "weak"}
     total = len(best)
+    strong = len(strong_skills)
+    moderate = len(moderate_skills - strong_skills)
+    weak = len(weak_skills - moderate_skills - strong_skills)
 
     console.print(
         f"[dim]{total} skills evidenced  ·  "
@@ -588,7 +585,7 @@ def scan(repo_path: str, learner_id: str | None) -> None:
 @click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
 def assess(learner_id: str | None) -> None:
     """Apply scan evidence to the skill graph."""
-    from .competency.assessor import apply_signals
+    from .competency.assessor import apply_evidence
     from .memory.store import load_state, save_state
 
     lid = resolve_learner_id(learner_id)
@@ -597,18 +594,17 @@ def assess(learner_id: str | None) -> None:
         console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
         return
 
-    if not state.github_cache or not state.github_cache.latest_signals:
+    if not state.evidence:
         console.print(
-            "[yellow]No scan results found. Run [bold]compass scan --repo <path>[/bold] first.[/yellow]"
+            "[yellow]No evidence found. Run [bold]compass scan --repo <path>[/bold] first.[/yellow]"
         )
         return
 
-    signals = state.github_cache.latest_signals
     console.print(
-        f"\nApplying [bold]{len(signals)}[/bold] signals to skill graph…"
+        f"\nAggregating [bold]{len(state.evidence)}[/bold] evidence records…"
     )
 
-    result = apply_signals(state, signals)
+    result = apply_evidence(state)
     save_state(state)
 
     if not result.updated_skills:
@@ -641,7 +637,7 @@ def assess(learner_id: str | None) -> None:
             conf_color = _confidence_color(conf)
             table.add_row(
                 f"  {_skill_name(skill_id)}",
-                f"{s.score:.3f}",
+                f"{s.current_score:.3f}",
                 f"[green]+{delta:.3f}[/green]" if delta > 0 else f"{delta:.3f}",
                 f"[{conf_color}]{conf}[/{conf_color}]",
             )
@@ -915,7 +911,7 @@ def run(repo_path: str, learner_id: str | None, no_module: bool) -> None:
     import time
     from pathlib import Path as _Path
     from .evidence.scanner import scan_repo
-    from .competency.assessor import apply_signals
+    from .competency.assessor import apply_evidence
     from .agent.planner import plan_next_milestone
     from .agent.curriculum import generate_module
     from .memory.store import load_state, save_state
@@ -947,10 +943,11 @@ def run(repo_path: str, learner_id: str | None, no_module: bool) -> None:
     scan_result = scan_repo(repo)
     elapsed = time.time() - t0
 
+    state.evidence = [e for e in state.evidence if e.source_repo != scan_result.repo_name]
+    state.evidence.extend(scan_result.evidence)
     cache = state.github_cache or GitHubCache()
     if scan_result.repo_name not in cache.repos:
         cache.repos.append(scan_result.repo_name)
-    cache.latest_signals = scan_result.signals
     cache.files_scanned = scan_result.files_scanned
     cache.scan_errors = scan_result.errors
     cache.last_scan = _now()
@@ -958,10 +955,10 @@ def run(repo_path: str, learner_id: str | None, no_module: bool) -> None:
 
     console.print(
         f"    [green]✓[/green] {scan_result.files_scanned} files  ·  "
-        f"{len(scan_result.signals)} signals found  ·  {elapsed:.1f}s"
+        f"{len(scan_result.evidence)} evidence records  ·  {elapsed:.1f}s"
     )
 
-    if not scan_result.signals:
+    if not scan_result.evidence:
         console.print(
             "\n[yellow]No learning evidence found.[/yellow] "
             "This repo may not contain AI/ML code yet.\n"
@@ -971,8 +968,8 @@ def run(repo_path: str, learner_id: str | None, no_module: bool) -> None:
         return
 
     # ── Step 2: Assess ────────────────────────────────────────────────────────
-    console.print(f"\n[bold]2/4[/bold]  Applying signals to skill graph…")
-    assess_result = apply_signals(state, scan_result.signals)
+    console.print(f"\n[bold]2/4[/bold]  Aggregating evidence…")
+    assess_result = apply_evidence(state)
     console.print(
         f"    [green]✓[/green] {len(assess_result.updated_skills)} skills updated"
         + (
@@ -1088,7 +1085,7 @@ def analyze(repo_path: str, learner_id: str | None) -> None:
     """
     import time
     from pathlib import Path as _Path
-    from .evidence.llm_assessor import assess_repo
+    from .evidence.llm_assessor import assess_repo, apply_guardrails
     from .memory.store import load_state, save_state
 
     lid = resolve_learner_id(learner_id)
@@ -1118,6 +1115,9 @@ def analyze(repo_path: str, learner_id: str | None) -> None:
         else:
             console.print(f"[red]Assessment failed:[/red] {result.error}")
         return
+
+    # Apply divergence + evidence-quality guardrails before saving
+    apply_guardrails(result, state.skill_graph)
 
     # Replace any existing assessment for this repo
     state.llm_assessments = [a for a in state.llm_assessments if a.repo_name != result.repo_name]
@@ -1193,44 +1193,55 @@ def explain(learner_id: str | None, repo: str | None) -> None:
 def _print_llm_assessment(assessment, state: LearnerState) -> None:
     """Print a table of LLM-assessed skills with deterministic scores alongside."""
     etype_style = {
-        "current_demonstrated": "green",
+        "current_demonstrated":  "green",
         "historical_experience": "yellow",
-        "inferred_exposure": "dim",
+        "inferred_exposure":     "dim",
+        "inferred_low_confidence": "dim",
     }
     etype_label = {
-        "current_demonstrated": "current",
+        "current_demonstrated":  "current",
         "historical_experience": "historical",
-        "inferred_exposure": "inferred",
+        "inferred_exposure":     "inferred",
+        "inferred_low_confidence": "low-conf",
     }
 
-    # Sort: current first, then historical, then inferred; within each by confidence desc
-    order = {"current_demonstrated": 0, "historical_experience": 1, "inferred_exposure": 2}
+    order = {
+        "current_demonstrated": 0,
+        "historical_experience": 1,
+        "inferred_exposure": 2,
+        "inferred_low_confidence": 3,
+    }
     sorted_skills = sorted(
         assessment.skills,
-        key=lambda s: (order.get(s.evidence_type, 3), -s.confidence),
+        key=lambda s: (order.get(s.evidence_type, 4), -s.confidence),
     )
 
-    table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
-    table.add_column("Skill", min_width=28)
-    table.add_column("LLM Conf.", justify="right", min_width=9)
-    table.add_column("Type", min_width=10)
-    table.add_column("Det. Score", justify="right", min_width=10)
-    table.add_column("Rationale", min_width=40)
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1), expand=True)
+    table.add_column("Skill", min_width=24, no_wrap=True)
+    table.add_column("Conf · Type", min_width=16, no_wrap=True)
+    table.add_column("Flag", min_width=8, no_wrap=True)
+    table.add_column("Rationale", ratio=1)
 
     for s in sorted_skills:
-        det = state.skill_graph.get(s.skill_id)
-        det_str = f"{det.effective_score:.2f}" if det else "—"
         style = etype_style.get(s.evidence_type, "")
         label = etype_label.get(s.evidence_type, s.evidence_type)
+        flag = "[yellow]⚠ review[/yellow]" if s.needs_review else ""
+        conf_type = f"[{style}]{s.confidence:.0%}  {label}[/{style}]"
         table.add_row(
             _skill_name(s.skill_id),
-            f"[{style}]{s.confidence:.0%}[/{style}]",
-            f"[{style}]{label}[/{style}]",
-            f"[dim]{det_str}[/dim]",
-            f"[dim]{s.rationale}[/dim]",
+            conf_type,
+            flag,
+            s.rationale,
         )
 
     console.print(table)
+
+    flagged = [s for s in assessment.skills if s.needs_review or s.evidence_type == "inferred_low_confidence"]
+    if flagged:
+        console.print()
+        console.print("[bold]Flagged skills:[/bold]")
+        for s in flagged:
+            console.print(f"  [yellow]⚠[/yellow] [bold]{_skill_name(s.skill_id)}[/bold]: {s.review_reason}")
 
 
 def _print_milestone_status(state: LearnerState) -> None:

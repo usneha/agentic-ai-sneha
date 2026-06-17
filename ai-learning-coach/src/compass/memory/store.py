@@ -16,6 +16,7 @@ from ..models import (
     LLMRepoAssessment,
     Milestone,
     Override,
+    SkillEvidence,
     SkillScore,
 )
 
@@ -80,8 +81,14 @@ def load_state(learner_id: str) -> LearnerState | None:
     if llm_file.exists():
         llm_assessments = [LLMRepoAssessment.model_validate(a) for a in json.loads(llm_file.read_text())]
 
+    evidence: list[SkillEvidence] = []
+    ev_file = d / "evidence.json"
+    if ev_file.exists():
+        evidence = [SkillEvidence.model_validate(e) for e in json.loads(ev_file.read_text())]
+
     return LearnerState(
         profile=profile,
+        evidence=evidence,
         skill_graph=skill_graph,
         active_milestone=active_milestone,
         completed_milestones=completed_milestones,
@@ -140,6 +147,12 @@ def save_state(state: LearnerState) -> None:
         _atomic_write(llm_file, [a.model_dump(mode="json") for a in state.llm_assessments])
     elif llm_file.exists():
         llm_file.unlink()
+
+    ev_file = d / "evidence.json"
+    if state.evidence:
+        _atomic_write(ev_file, [e.model_dump(mode="json") for e in state.evidence])
+    elif ev_file.exists():
+        ev_file.unlink()
 
 
 def backup_state(learner_id: str) -> None:

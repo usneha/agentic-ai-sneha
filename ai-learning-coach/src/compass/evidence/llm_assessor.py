@@ -7,11 +7,19 @@ Output is stored separately from deterministic signals (llm_assessments
 on LearnerState) and does NOT affect skill graph scores. Exposed via
 `compass explain`.
 
+Guardrails (applied via apply_guardrails() before saving):
+  - Divergence: LLM confidence >= 0.7 with deterministic score == 0.0
+    → flagged needs_review=True; signal preserved but visually marked
+  - Evidence quality: rationale lacks a concrete reference (file path,
+    class/function name, package, quoted phrase)
+    → evidence_type downgraded to inferred_low_confidence
+
 See scanner.py docstring for the full three-layer architecture note.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import openai
@@ -174,6 +182,61 @@ Return ONLY valid JSON, no markdown fences:
     {{"skill_id": "string", "confidence": 0.0, "evidence_type": "string", "rationale": "string"}}
   ]
 }}"""
+
+
+# ── Guardrails ────────────────────────────────────────────────────────────────
+
+# Patterns that indicate a rationale contains a concrete evidence reference.
+_CONCRETE_PATTERNS = [
+    r'\b\w[\w/]*\.\w{2,4}\b',          # filename.ext or path/to/file.ext
+    r'[A-Z][a-z]+[A-Z]\w*[\(\[]',      # CamelCase class/function call
+    r'[a-z_]{3,}\s*[\(\[]',            # snake_case function call
+    r'\$[A-Za-z_]\w+',                 # PHP/shell variable
+    r'`[^`]{3,}`',                     # backtick-quoted code
+    r"'[A-Za-z][\w/.-]{3,}'",          # quoted identifier/path
+    r'"[A-Za-z][\w/.-]{3,}"',          # quoted identifier/path
+    r'\b(import|require|use|from)\s+\w[\w.\\]+',  # import statement
+    r'\b(boto3|openai|langchain|fastapi|flask|express|django|rails|'
+    r'jquery|axios|aws|s3|ec2|rds|sns|docker|pytest|jest|phpunit)\b',
+]
+_CONCRETE_RE = re.compile("|".join(_CONCRETE_PATTERNS), re.IGNORECASE)
+
+_DIVERGENCE_THRESHOLD = 0.70   # LLM confidence at or above this
+_DIVERGENCE_DET_MAX   = 0.00   # with deterministic score at or below this
+
+
+def _has_concrete_evidence(rationale: str) -> bool:
+    """Return True if rationale contains a specific, citable evidence reference."""
+    return len(rationale) >= 40 and bool(_CONCRETE_RE.search(rationale))
+
+
+def apply_guardrails(
+    assessment: LLMRepoAssessment,
+    skill_graph: dict,
+) -> LLMRepoAssessment:
+    """Apply divergence and evidence-quality guardrails in place.
+
+    Mutates assessment.skills entries — does not remove any signals.
+    """
+    for skill in assessment.skills:
+        # 1. Divergence guardrail
+        det = skill_graph.get(skill.skill_id)
+        det_score = det.effective_score if det else 0.0
+        if skill.confidence >= _DIVERGENCE_THRESHOLD and det_score <= _DIVERGENCE_DET_MAX:
+            skill.needs_review = True
+            skill.review_reason = (
+                f"LLM confidence {skill.confidence:.0%} but deterministic score is 0.00"
+            )
+
+        # 2. Evidence quality guardrail — runs regardless of divergence flag
+        if not _has_concrete_evidence(skill.rationale):
+            skill.evidence_type = "inferred_low_confidence"
+            reason = "rationale lacks concrete file/code reference"
+            skill.review_reason = (
+                f"{skill.review_reason}; {reason}" if skill.review_reason else reason
+            )
+
+    return assessment
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────

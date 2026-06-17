@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .._data import all_skill_ids, all_foundation_skill_ids, evidence_signals
-from ..models import ParsedSignal
+from ..models import SkillEvidence
 
 # ── Directory exclusions ──────────────────────────────────────────────────────
 
@@ -110,20 +110,21 @@ class ClassifiedFile:
     trust: str   # "trusted" | "semi_trusted" | "excluded"
 
 
+_EVIDENCE_CONFIDENCE = {"strong": 85, "moderate": 60, "weak": 25}
+
+
 @dataclass
 class ScanResult:
-    signals: list[ParsedSignal]
+    evidence: list[SkillEvidence]
     files_scanned: int
     repo_name: str
     errors: list[str] = field(default_factory=list)
 
     @property
-    def by_level(self) -> dict[str, list[ParsedSignal]]:
-        out: dict[str, list[ParsedSignal]] = {
-            "github_strong": [], "github_moderate": [], "github_weak": [],
-        }
-        for s in self.signals:
-            out.setdefault(s.signal_type, []).append(s)
+    def by_level(self) -> dict[str, list[SkillEvidence]]:
+        out: dict[str, list[SkillEvidence]] = {}
+        for e in self.evidence:
+            out.setdefault(e.level, []).append(e)
         return out
 
 
@@ -297,8 +298,8 @@ def scan_repo(repo_path: Path) -> ScanResult:
         if matched:
             skill_levels[skill_id] = matched
 
-    # Apply minimum evidence gate and stacking rules, then emit signals
-    found: list[ParsedSignal] = []
+    # Apply minimum evidence gate and stacking rules, then emit evidence records
+    found: list[SkillEvidence] = []
 
     for skill_id, matched in skill_levels.items():
         has_arch = "strong" in matched
@@ -310,32 +311,35 @@ def scan_repo(repo_path: Path) -> ScanResult:
             continue
 
         if has_arch:
-            found.append(ParsedSignal(
+            found.append(SkillEvidence(
                 skill_id=skill_id,
-                signal_type="github_strong",
-                source=repo_name,
-                weight=source_weights.get("github_strong", 0.35),
+                evidence_type="observed",
+                recency="current",
+                confidence=_EVIDENCE_CONFIDENCE["strong"],
+                source_repo=repo_name,
             ))
 
         if has_behavioral:
-            found.append(ParsedSignal(
+            found.append(SkillEvidence(
                 skill_id=skill_id,
-                signal_type="github_moderate",
-                source=repo_name,
-                weight=source_weights.get("github_moderate", 0.20),
+                evidence_type="observed",
+                recency="current",
+                confidence=_EVIDENCE_CONFIDENCE["moderate"],
+                source_repo=repo_name,
             ))
 
         # Contextual only adds when behavioral present and architectural absent
         if has_contextual and has_behavioral and not has_arch:
-            found.append(ParsedSignal(
+            found.append(SkillEvidence(
                 skill_id=skill_id,
-                signal_type="github_weak",
-                source=repo_name,
-                weight=source_weights.get("github_weak", 0.05),
+                evidence_type="inferred",
+                recency="current",
+                confidence=_EVIDENCE_CONFIDENCE["weak"],
+                source_repo=repo_name,
             ))
 
     return ScanResult(
-        signals=found,
+        evidence=found,
         files_scanned=len(files),
         repo_name=repo_name,
         errors=errors,

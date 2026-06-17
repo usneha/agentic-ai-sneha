@@ -40,11 +40,31 @@ class LearnerProfile(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
+class SkillEvidence(BaseModel):
+    evidence_id: str = Field(default_factory=_uuid)
+    skill_id: str
+    evidence_type: Literal["observed", "inferred", "synthesized"]
+    recency: Literal["current", "historical"]
+    confidence: int  # 0–100
+    source_repo: Optional[str] = None
+    source_path: Optional[str] = None
+    rationale: str = ""
+    recorded_at: datetime = Field(default_factory=_now)
+
+    @property
+    def level(self) -> str:
+        if self.confidence >= 70:
+            return "strong"
+        if self.confidence >= 40:
+            return "moderate"
+        return "weak"
+
+
 class SkillScore(BaseModel):
     skill_id: str
-    score: float = 0.0           # evidence only — grows from scans and journal
-    base_score: float = 0.0      # role prior — set on init, never changes
-    foundation_score: float = 0.0  # credit from foundation skills — recomputed on each assess
+    current_score: float = 0.0    # aggregated from evidence, penalises historical/inferred
+    experience_score: float = 0.0 # aggregated with generous historical/inferred weights
+    base_score: float = 0.0       # role prior — set on init, never changes
     confidence: SkillConfidence = "low"
     last_updated: datetime = Field(default_factory=_now)
     evidence_sources: list[str] = Field(default_factory=list)
@@ -52,7 +72,7 @@ class SkillScore(BaseModel):
 
     @property
     def effective_score(self) -> float:
-        return min(1.0, self.score + self.base_score + self.foundation_score)
+        return min(1.0, self.current_score + self.base_score)
 
 
 class ParsedSignal(BaseModel):
@@ -112,8 +132,15 @@ class Milestone(BaseModel):
 class LLMSkillAssessment(BaseModel):
     skill_id: str
     confidence: float
-    evidence_type: Literal["current_demonstrated", "historical_experience", "inferred_exposure"]
+    evidence_type: Literal[
+        "current_demonstrated",
+        "historical_experience",
+        "inferred_exposure",
+        "inferred_low_confidence",  # downgraded: rationale lacks concrete evidence
+    ]
     rationale: str
+    needs_review: bool = False      # high LLM confidence but zero deterministic evidence
+    review_reason: str = ""         # explains why needs_review or inferred_low_confidence
 
 
 class LLMRepoAssessment(BaseModel):
@@ -170,6 +197,7 @@ class CurriculumModule(BaseModel):
 
 class LearnerState(BaseModel):
     profile: LearnerProfile
+    evidence: list[SkillEvidence] = Field(default_factory=list)
     skill_graph: dict[str, SkillScore] = Field(default_factory=dict)
     active_milestone: Optional[Milestone] = None
     completed_milestones: list[Milestone] = Field(default_factory=list)
