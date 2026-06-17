@@ -27,8 +27,20 @@ def _combine(contribs: list[float]) -> float:
 
 def aggregate(records: list[SkillEvidence]) -> tuple[float, float]:
     """Return (current_score, experience_score) for a list of evidence records."""
+    current_score, experience_score, _breakdown = aggregate_traced(records)
+    return current_score, experience_score
+
+
+def aggregate_traced(records: list[SkillEvidence]) -> tuple[float, float, list[dict]]:
+    """Same as aggregate(), but also returns a per-record contribution breakdown.
+
+    Each breakdown entry shows the inputs and resulting contribution for one
+    evidence record, before the diminishing-bonus combination step. Used by
+    apply_evidence() to populate AssessResult.aggregation_detail for tracing —
+    does not change the scoring formula itself.
+    """
     if not records:
-        return 0.0, 0.0
+        return 0.0, 0.0, []
 
     current_contribs = [
         (r.confidence / 100)
@@ -43,4 +55,16 @@ def aggregate(records: list[SkillEvidence]) -> tuple[float, float]:
         for r in records
     ]
 
-    return _combine(current_contribs), _combine(experience_contribs)
+    breakdown = [
+        {
+            "source_repo": r.source_repo,
+            "evidence_type": r.evidence_type,
+            "recency": r.recency,
+            "confidence": r.confidence,
+            "current_contribution": round(cc, 4),
+            "experience_contribution": round(ec, 4),
+        }
+        for r, cc, ec in zip(records, current_contribs, experience_contribs)
+    ]
+
+    return _combine(current_contribs), _combine(experience_contribs), breakdown

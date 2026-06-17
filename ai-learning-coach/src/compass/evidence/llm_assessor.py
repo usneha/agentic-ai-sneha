@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import openai
@@ -247,16 +248,36 @@ def apply_guardrails(
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+@dataclass
+class LLMAssessmentDebug:
+    """Observability detail for one assess_repo call — not persisted with the assessment itself."""
+    prompt: str = ""
+    raw_response: str = ""
+    sampled_files: list[str] = field(default_factory=list)
+
+
 def assess_repo(repo_path: Path) -> LLMRepoAssessment:
     """Run LLM assessment on a repo. Returns assessment; error field set if unavailable."""
+    assessment, _debug = assess_repo_traced(repo_path)
+    return assessment
+
+
+def assess_repo_traced(repo_path: Path) -> tuple[LLMRepoAssessment, LLMAssessmentDebug]:
+    """Same as assess_repo, but also returns the prompt/response/sampled-files used.
+
+    Used by the run_pipeline orchestrator to populate RunTrace.
+    """
     repo_path = repo_path.resolve()
     repo_name = repo_path.name
+    debug = LLMAssessmentDebug()
 
     if not OPENAI_API_KEY:
-        return LLMRepoAssessment(repo_name=repo_name, error="no_api_key")
+        return LLMRepoAssessment(repo_name=repo_name, error="no_api_key"), debug
 
     ctx = _build_context(repo_path)
+    debug.sampled_files = [f["path"] for f in ctx["files"]]
     prompt = _build_prompt(repo_name, ctx)
+    debug.prompt = prompt
 
     valid_ids = set(skill_metadata().keys()) | {
         sub["id"]
@@ -272,6 +293,7 @@ def assess_repo(repo_path: Path) -> LLMRepoAssessment:
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.choices[0].message.content.strip()
+        debug.raw_response = raw
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -296,15 +318,16 @@ def assess_repo(repo_path: Path) -> LLMRepoAssessment:
         raw_recency = data.get("repo_recency", "unknown")
         repo_recency = raw_recency if raw_recency in {"current", "historical", "unknown"} else "unknown"
 
-        return LLMRepoAssessment(
+        assessment = LLMRepoAssessment(
             repo_name=repo_name,
             skills=skills,
             repo_summary=data.get("repo_summary", ""),
             repo_recency=repo_recency,
             model=OPENAI_MODEL,
         )
+        return assessment, debug
 
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
-        return LLMRepoAssessment(repo_name=repo_name, error=f"parse_error: {exc}")
+        return LLMRepoAssessment(repo_name=repo_name, error=f"parse_error: {exc}"), debug
     except openai.OpenAIError as exc:
-        return LLMRepoAssessment(repo_name=repo_name, error=f"api_error: {exc}")
+        return LLMRepoAssessment(repo_name=repo_name, error=f"api_error: {exc}"), debug

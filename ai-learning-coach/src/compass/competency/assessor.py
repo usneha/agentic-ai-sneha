@@ -14,11 +14,12 @@ After aggregation, two additive post-processing steps run:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from .._data import evidence_signals, skills, skill_domain_map, foundation_credit_map
-from ..evidence.aggregator import aggregate
+from .corrections import apply_correction, index_corrections
+from ..evidence.aggregator import aggregate_traced
 from ..models import LearnerState, ParsedSignal, SkillEvidence, SkillScore
 
 
@@ -29,6 +30,7 @@ class AssessResult:
     confidence_changes: dict[str, str]   # skill_id → new confidence
     integration_bonuses: list[tuple[str, str]]
     breadth_bonuses: list[str]
+    aggregation_detail: dict[str, list[dict]] = field(default_factory=dict)  # skill_id → per-record breakdown
 
     def summary(self) -> str:
         lines = []
@@ -101,21 +103,29 @@ def apply_evidence(state: LearnerState) -> AssessResult:
         for sig in entry.parsed_signals:
             all_evidence.append(_signal_to_evidence(sig))
 
-    # Group by skill_id and aggregate
+    # Apply user corrections from `compass review` (accept/downgrade/reject/correct)
+    # before grouping. Rejected records are dropped here only — state.evidence and
+    # the originating run trace are left untouched for audit.
+    corrections_index = index_corrections(state.corrections)
     by_skill: dict[str, list[SkillEvidence]] = {}
     for ev in all_evidence:
-        by_skill.setdefault(ev.skill_id, []).append(ev)
+        effective = apply_correction(ev, corrections_index)
+        if effective is None:
+            continue
+        by_skill.setdefault(effective.skill_id, []).append(effective)
 
+    aggregation_detail: dict[str, list[dict]] = {}
     for skill_id, records in by_skill.items():
         if skill_id not in state.skill_graph:
             state.skill_graph[skill_id] = SkillScore(skill_id=skill_id)
         ss = state.skill_graph[skill_id]
-        current_score, experience_score = aggregate(records)
+        current_score, experience_score, breakdown = aggregate_traced(records)
         ss.current_score = current_score
         ss.experience_score = experience_score
         ss.confidence = _confidence_from_score(current_score)
         ss.evidence_sources = sorted({ev.source_repo for ev in records if ev.source_repo})
         ss.last_updated = _now()
+        aggregation_detail[skill_id] = breakdown
 
     # Integration bonuses — additive on top of aggregated scores
     sig_config = evidence_signals()
@@ -165,4 +175,5 @@ def apply_evidence(state: LearnerState) -> AssessResult:
         confidence_changes=confidence_changes,
         integration_bonuses=bonus_pairs,
         breadth_bonuses=[],
+        aggregation_detail=aggregation_detail,
     )

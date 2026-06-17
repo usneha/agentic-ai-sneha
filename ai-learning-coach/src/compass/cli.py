@@ -900,24 +900,61 @@ def _print_module(mod: "CurriculumModule") -> None:  # type: ignore[name-defined
 
 # ── compass run ───────────────────────────────────────────────────────────────
 
+_STEP_LABELS = {
+    "repo_scan": "Repo Scan (deterministic)",
+    "repo_analyze": "Repo Analyze (LLM)",
+    "divergence_check": "Divergence Check",
+    "evidence_update": "Evidence Update",
+    "profile_recompute": "Profile Recompute",
+    "recommendation": "Recommendation",
+}
+
+
+def _format_step_line(step) -> str:
+    out = step.outputs
+    if step.error:
+        return f"[yellow]⚠[/yellow] {_STEP_LABELS.get(step.step, step.step):<28} [yellow]{step.error}[/yellow]  [dim]{step.duration_ms}ms[/dim]"
+
+    detail = ""
+    if step.step == "repo_scan":
+        detail = f"{out.get('files_scanned', 0)} files  ·  {out.get('deterministic_evidence_records', 0)} evidence records"
+    elif step.step == "repo_analyze":
+        detail = f"{out.get('skills_assessed', 0)} skills assessed  ·  recency: {out.get('repo_recency', 'unknown')}"
+    elif step.step == "divergence_check":
+        detail = f"{out.get('flagged', 0)} flagged"
+        if out.get("flagged_skills"):
+            detail += f"  ·  {', '.join(out['flagged_skills'])}"
+    elif step.step == "evidence_update":
+        detail = f"{out.get('total_evidence_for_repo', 0)} evidence records for this repo"
+    elif step.step == "profile_recompute":
+        detail = f"{out.get('skills_updated', 0)} skills updated"
+        if out.get("integration_bonuses"):
+            detail += f"  ·  bonuses: {', '.join(out['integration_bonuses'])}"
+    elif step.step == "recommendation":
+        if out.get("re_engagement_mode"):
+            detail = "re-engagement mode"
+        elif out.get("no_eligible_skills"):
+            detail = "all skills at target depth"
+        else:
+            detail = f"{out.get('domain_name', '')}  [dim](priority {out.get('priority', 0):.3f})[/dim]"
+
+    return f"[green]✓[/green] {_STEP_LABELS.get(step.step, step.step):<28} {detail}  [dim]{step.duration_ms}ms[/dim]"
+
+
 @cli.command()
 @click.argument("repo_path", default=".", metavar="REPO", type=click.Path(exists=True, file_okay=False))
 @click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
-@click.option("--no-module", is_flag=True, default=False, help="Skip curriculum module generation.")
-def run(repo_path: str, learner_id: str | None, no_module: bool) -> None:
-    """End-to-end: scan → assess → recommend → generate module.
+def run(repo_path: str, learner_id: str | None) -> None:
+    """Run the full agentic pipeline against a repo.
 
-    REPO defaults to the current directory.
+    Orchestrates: repo_scan → repo_analyze (LLM) → divergence_check →
+    evidence_update → profile_recompute → recommendation. REPO defaults to
+    the current directory. Every run is recorded as a trace — view it with
+    `compass trace <run_id>`.
     """
-    import time
     from pathlib import Path as _Path
-    from .evidence.scanner import scan_repo
-    from .competency.assessor import apply_evidence
-    from .agent.planner import plan_next_milestone
-    from .agent.curriculum import generate_module
-    from .memory.store import load_state, save_state
-    from .models import GitHubCache, Milestone, _now
-    from . import _data
+    from .agent.orchestrator import run_pipeline
+    from .memory.store import load_state, save_state, save_trace
 
     lid = resolve_learner_id(learner_id)
     state = load_state(lid)
@@ -927,139 +964,391 @@ def run(repo_path: str, learner_id: str | None, no_module: bool) -> None:
 
     repo = _Path(repo_path).resolve()
 
-    # ── Step 1: Scan ──────────────────────────────────────────────────────────
     console.print()
     console.print(
         Panel(
             f"[bold]{state.profile.name}[/bold]  ·  {repo.name}",
-            title="AI Builder Compass — Full Run",
+            title="AI Builder Compass — Agentic Run",
             title_align="left",
             style="bold blue",
             expand=False,
         )
     )
-    console.print(f"\n[bold]1/4[/bold]  Scanning [bold]{repo}[/bold] …")
+    console.print()
 
-    t0 = time.time()
-    scan_result = scan_repo(repo)
-    elapsed = time.time() - t0
+    with console.status("Running pipeline…"):
+        trace = run_pipeline(state, repo)
 
-    state.evidence = [e for e in state.evidence if e.source_repo != scan_result.repo_name]
-    state.evidence.extend(scan_result.evidence)
-    cache = state.github_cache or GitHubCache()
-    if scan_result.repo_name not in cache.repos:
-        cache.repos.append(scan_result.repo_name)
-    cache.files_scanned = scan_result.files_scanned
-    cache.scan_errors = scan_result.errors
-    cache.last_scan = _now()
-    state.github_cache = cache
+    save_state(state)
+    trace_path = save_trace(trace)
 
-    console.print(
-        f"    [green]✓[/green] {scan_result.files_scanned} files  ·  "
-        f"{len(scan_result.evidence)} evidence records  ·  {elapsed:.1f}s"
-    )
+    for step in trace.steps:
+        console.print(_format_step_line(step))
 
-    if not scan_result.evidence:
-        console.print(
-            "\n[yellow]No learning evidence found.[/yellow] "
-            "This repo may not contain AI/ML code yet.\n"
-            "Try pointing at a different repo, or add AI code first."
-        )
-        save_state(state)
-        return
-
-    # ── Step 2: Assess ────────────────────────────────────────────────────────
-    console.print(f"\n[bold]2/4[/bold]  Aggregating evidence…")
-    assess_result = apply_evidence(state)
-    console.print(
-        f"    [green]✓[/green] {len(assess_result.updated_skills)} skills updated"
-        + (
-            f"  ·  {len(assess_result.integration_bonuses)} integration bonus(es)"
-            if assess_result.integration_bonuses else ""
-        )
-    )
-
-    # ── Step 3: Recommend ─────────────────────────────────────────────────────
-    console.print(f"\n[bold]3/4[/bold]  Running planner…")
-    plan = plan_next_milestone(state)
-
-    vel_color = {"high": "green", "moderate": "cyan", "low": "yellow", "stalled": "red"}
-    v = plan.velocity
-    console.print(
-        f"    Velocity: [{vel_color.get(v.tier, 'white')}]{v.signal}[/{vel_color.get(v.tier, 'white')}]"
-        f"  [dim](×{v.multiplier:.2f})[/dim]"
-    )
-
-    if plan.re_engagement_mode:
-        save_state(state)
-        console.print(
-            "\n[yellow]Re-engagement mode.[/yellow] "
-            "No recent activity detected — push some code or add a journal entry first."
-        )
-        return
-
-    if plan.no_eligible_skills or plan.top is None:
-        save_state(state)
-        console.print(
-            "\n[green]All skills at target depth.[/green] "
-            "Consider raising your desired depth."
-        )
-        return
-
-    top = plan.top
-    depth_thresh = _data.depth_threshold(state.profile.desired_depth)
-    milestone = Milestone(
-        domain=top.domain,
-        title=f"{top.domain_name} — {state.profile.desired_depth.capitalize()} Level",
-        target_skills=top.target_skills,
-        state="in_progress",
-        success_criteria=[
-            f"Score ≥ {depth_thresh:.2f} on {sid}" for sid in top.target_skills
-        ],
-    )
-    milestone.started_at = _now()
-    state.active_milestone = milestone
-    console.print(
-        f"    [green]✓[/green] Milestone: [bold]{milestone.title}[/bold]  "
-        f"[dim](priority: {top.priority:.3f})[/dim]"
-    )
-
-    # ── Step 4: Module ────────────────────────────────────────────────────────
-    if no_module:
-        save_state(state)
-        console.print("\n[dim]Skipped module generation (--no-module).[/dim]")
-    else:
-        console.print(f"\n[bold]4/4[/bold]  Generating curriculum module…")
-        mod_result = generate_module(state, milestone)
-        state.modules[milestone.milestone_id] = mod_result.module
-        save_state(state)
-
-        if mod_result.failure_mode:
+    if trace.divergence_flags:
+        console.print()
+        console.print("[bold]Divergence flags:[/bold]")
+        for f in trace.divergence_flags:
             console.print(
-                f"    [yellow]⚠ Fallback mode ({mod_result.failure_mode})[/yellow] — curated resources only"
+                f"  [yellow]⚠[/yellow] {_skill_name(f.skill_id)}: "
+                f"LLM {f.llm_confidence:.0%} vs deterministic {f.deterministic_score:.2f} — {f.reason}"
             )
-        else:
-            console.print("    [green]✓[/green] Full module generated")
 
-        _print_module(mod_result.module)
+    console.print()
+    rec = trace.recommendation_summary
+    if rec.get("re_engagement_mode"):
+        console.print(
+            "[yellow]Re-engagement mode.[/yellow] No activity in the past 14 days — "
+            "push a small update or add a journal entry, then run again."
+        )
+    elif rec.get("no_eligible_skills"):
+        console.print("[green]All skills at or above target depth.[/green] Consider raising desired_depth.")
+    elif rec:
+        console.print(
+            Panel(
+                f"[bold]{rec.get('domain_name', '')}[/bold]\n"
+                f"[dim]Priority: {rec.get('priority', 0):.3f}  ·  Velocity: {rec.get('velocity_signal', '')}[/dim]",
+                title="Next Milestone",
+                title_align="left",
+                style="green",
+                expand=False,
+            )
+        )
+        console.print(
+            "[dim]Run [bold]compass recommend --accept[/bold] to set this as your active milestone.[/dim]"
+        )
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    console.print()
+    console.print(
+        f"[dim]Run ID: [bold]{trace.run_id}[/bold]  ·  trace saved to {trace_path}[/dim]"
+    )
+    console.print(f"[dim]Run [bold]compass trace {trace.run_id}[/bold] for full detail.[/dim]")
+
+
+# ── compass trace ────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("run_id")
+@click.option("--learner-id", default=None, help="Learner ID (narrows the search; defaults to active learner, then searches all learners).")
+def trace(run_id: str, learner_id: str | None) -> None:
+    """Show full observability detail for a `compass run` execution.
+
+    Displays: tools called, inputs/outputs, files sampled, LLM prompt/response,
+    evidence records created, divergence flags, and per-skill aggregation math.
+    """
+    from .memory.store import load_trace, find_trace
+
+    lid = learner_id or get_active_learner_id()
+    t = load_trace(lid, run_id) if lid else None
+    if t is None:
+        t = find_trace(run_id)
+    if t is None:
+        console.print(f"[red]No trace found for run ID [bold]{run_id}[/bold].[/red]")
+        sys.exit(1)
+
+    duration = ""
+    if t.completed_at:
+        duration = f"{(t.completed_at - t.started_at).total_seconds():.1f}s"
+
     console.print()
     console.print(
         Panel(
-            f"Scanned [bold]{scan_result.files_scanned}[/bold] files  ·  "
-            f"Updated [bold]{len(assess_result.updated_skills)}[/bold] skills  ·  "
-            f"Milestone: [bold]{milestone.title}[/bold]",
-            title="Done",
+            f"Learner: [bold]{t.learner_id}[/bold]  ·  Repo: [bold]{t.repo_name}[/bold]\n"
+            f"[dim]{t.repo_path}[/dim]\n"
+            f"Started: {t.started_at.strftime('%Y-%m-%d %H:%M:%S')}  ·  Duration: {duration}",
+            title=f"Run Trace: {t.run_id}",
             title_align="left",
-            style="green",
+            style="blue",
             expand=False,
         )
     )
-    console.print(
-        "[dim]Run [bold]compass status[/bold] to see your full skill graph, "
-        "or [bold]compass module[/bold] to view the curriculum again.[/dim]"
-    )
+
+    # ── Tools called ──────────────────────────────────────────────────────────
+    console.print("\n[bold]Tools Called[/bold]")
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
+    table.add_column("Step", min_width=20)
+    table.add_column("Duration", justify="right", min_width=8)
+    table.add_column("Inputs", min_width=30, style="dim")
+    table.add_column("Outputs", min_width=30, style="dim")
+    table.add_column("Error", style="yellow")
+    for step in t.steps:
+        table.add_row(
+            step.step,
+            f"{step.duration_ms}ms",
+            ", ".join(f"{k}={v}" for k, v in step.inputs.items()),
+            ", ".join(f"{k}={v}" for k, v in step.outputs.items()),
+            step.error or "",
+        )
+    console.print(table)
+
+    # ── Files sampled ────────────────────────────────────────────────────────
+    if t.files_sampled:
+        console.print("\n[bold]Files Sampled (LLM context)[/bold]")
+        for f in t.files_sampled:
+            console.print(f"  [dim]•[/dim] {f}")
+
+    # ── LLM prompt/response ──────────────────────────────────────────────────
+    if t.llm_prompt:
+        console.print("\n[bold]LLM Prompt[/bold]")
+        console.print(Panel(t.llm_prompt, style="dim", expand=False))
+    if t.llm_response:
+        console.print("\n[bold]LLM Response[/bold]")
+        console.print(Panel(t.llm_response, style="dim", expand=False))
+
+    # ── Evidence created ─────────────────────────────────────────────────────
+    if t.evidence_created:
+        console.print("\n[bold]Evidence Records Created[/bold]")
+        ev_table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
+        ev_table.add_column("Skill", min_width=24)
+        ev_table.add_column("Type", min_width=12)
+        ev_table.add_column("Recency", min_width=10)
+        ev_table.add_column("Confidence", justify="right", min_width=10)
+        ev_table.add_column("Rationale", style="dim", ratio=1)
+        for ev in t.evidence_created:
+            ev_table.add_row(
+                _skill_name(ev.skill_id),
+                ev.evidence_type,
+                ev.recency,
+                f"{ev.confidence}%",
+                ev.rationale,
+            )
+        console.print(ev_table)
+
+    # ── Divergence flags ─────────────────────────────────────────────────────
+    if t.divergence_flags:
+        console.print("\n[bold]Divergence Flags[/bold]")
+        for f in t.divergence_flags:
+            console.print(
+                f"  [yellow]⚠[/yellow] {_skill_name(f.skill_id)}: "
+                f"LLM {f.llm_confidence:.0%} vs deterministic {f.deterministic_score:.2f} — {f.reason}"
+            )
+
+    # ── Aggregation math per skill ───────────────────────────────────────────
+    if t.aggregation:
+        console.print("\n[bold]Aggregation Math[/bold]")
+        for agg in t.aggregation:
+            console.print(
+                f"\n  [bold cyan]{_skill_name(agg.skill_id)}[/bold cyan]  "
+                f"→ current={agg.current_score:.3f}  experience={agg.experience_score:.3f}"
+            )
+            if agg.contributions:
+                contrib_table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
+                contrib_table.add_column("Source", min_width=16)
+                contrib_table.add_column("Type", min_width=10)
+                contrib_table.add_column("Recency", min_width=10)
+                contrib_table.add_column("Conf.", justify="right", min_width=6)
+                contrib_table.add_column("Current contrib.", justify="right", min_width=14)
+                contrib_table.add_column("Exp. contrib.", justify="right", min_width=12)
+                for c in agg.contributions:
+                    contrib_table.add_row(
+                        c.get("source_repo") or "—",
+                        c.get("evidence_type", ""),
+                        c.get("recency", ""),
+                        f"{c.get('confidence', 0)}%",
+                        f"{c.get('current_contribution', 0):.3f}",
+                        f"{c.get('experience_contribution', 0):.3f}",
+                    )
+                console.print(contrib_table)
+
+    console.print()
+
+
+# ── compass review ───────────────────────────────────────────────────────────
+
+def _gather_unresolved_flags(learner_id: str, skill: str | None, repo: str | None):
+    """Return [(trace, flag), ...] for unresolved divergence flags, most urgent first."""
+    from .memory.store import list_traces
+
+    pairs = []
+    for t in list_traces(learner_id):
+        if repo and t.repo_name != repo:
+            continue
+        for flag in t.divergence_flags:
+            if flag.resolved:
+                continue
+            if skill and flag.skill_id != skill:
+                continue
+            pairs.append((t, flag))
+
+    pairs.sort(key=lambda p: (p[1].llm_confidence - p[1].deterministic_score), reverse=True)
+    return pairs
+
+
+@cli.command()
+@click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
+@click.option("--skill", default=None, help="Filter to a specific skill_id (e.g. mcp.building).")
+@click.option("--repo", default=None, help="Filter to a specific repo name.")
+def review(learner_id: str | None, skill: str | None, repo: str | None) -> None:
+    """Interactively review unresolved divergence flags from past runs.
+
+    Surfaces cases where the LLM assessment diverges from deterministic
+    evidence (high LLM confidence, zero deterministic score) or where the
+    LLM's rationale was too weak/generic to trust outright. For each flag:
+    accept (keep as-is), downgrade (keep, lower confidence), reject (exclude
+    from scoring, kept in the trace), or correct (fix skill/recency/type).
+    """
+    from . import _data
+    from .competency.assessor import apply_evidence
+    from .memory.store import load_state, save_state, save_trace
+    from .models import EvidenceCorrection
+
+    lid = resolve_learner_id(learner_id)
+    state = load_state(lid)
+    if state is None:
+        console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    pairs = _gather_unresolved_flags(lid, skill, repo)
+    if not pairs:
+        filt = []
+        if skill:
+            filt.append(f"skill={skill}")
+        if repo:
+            filt.append(f"repo={repo}")
+        suffix = f"  [dim]({', '.join(filt)})[/dim]" if filt else ""
+        console.print(f"\n[green]No unresolved divergence flags.[/green]{suffix}")
+        return
+
+    console.print(f"\n[bold]{len(pairs)}[/bold] unresolved divergence flag(s).\n")
+
+    recency_choice = click.Choice(["", "current", "historical", "unknown"])
+    etype_choice = click.Choice(["", "observed", "inferred", "synthesized"])
+    valid_skill_ids = set(_data.all_skill_ids()) | set(_data.all_foundation_skill_ids())
+
+    dirty_traces: dict[str, object] = {}
+    new_corrections: list[EvidenceCorrection] = []
+
+    try:
+        for i, (t, flag) in enumerate(pairs, 1):
+            ev = next((e for e in t.evidence_created if e.skill_id == flag.skill_id), None)
+            body = (
+                f"[bold]{_skill_name(flag.skill_id)}[/bold]  [dim]({flag.skill_id})[/dim]\n"
+                f"Repo: {t.repo_name}  ·  Run: {t.run_id[:8]}…\n"
+                f"LLM confidence: [bold]{flag.llm_confidence:.0%}[/bold]   "
+                f"Deterministic score: [bold]{flag.deterministic_score:.2f}[/bold]\n"
+                f"[dim]{flag.reason}[/dim]"
+            )
+            if ev:
+                body += f"\n\n[italic]{ev.rationale}[/italic]"
+            console.print(Panel(body, title=f"Flag {i}/{len(pairs)}", title_align="left", style="yellow", expand=False))
+
+            console.print("  [cyan]1[/cyan] accept    — keep the LLM evidence as-is")
+            console.print("  [cyan]2[/cyan] downgrade — keep it, reduce confidence")
+            console.print("  [cyan]3[/cyan] reject    — exclude from scoring, keep in trace")
+            console.print("  [cyan]4[/cyan] correct   — fix skill / recency / evidence_type")
+            console.print("  [cyan]5[/cyan] skip      — leave unresolved for now")
+            choice = click.prompt("Choice", type=click.IntRange(1, 5), default=5)
+
+            if choice == 5:
+                console.print()
+                continue
+
+            action = {1: "accept", 2: "downgrade", 3: "reject", 4: "correct"}[choice]
+            corrected_skill_id = corrected_recency = corrected_evidence_type = None
+
+            if action == "correct":
+                raw_skill = click.prompt("New skill_id (blank = keep)", default="", show_default=False).strip()
+                if raw_skill:
+                    if raw_skill not in valid_skill_ids:
+                        console.print(f"  [yellow]⚠ '{raw_skill}' is not a known skill_id — saving anyway.[/yellow]")
+                    corrected_skill_id = raw_skill
+                corrected_recency = click.prompt("New recency", type=recency_choice, default="", show_default=False) or None
+                corrected_evidence_type = click.prompt("New evidence_type", type=etype_choice, default="", show_default=False) or None
+
+            note = click.prompt("Note (optional)", default="", show_default=False)
+
+            correction = EvidenceCorrection(
+                skill_id=flag.skill_id,
+                source_repo=t.repo_name,
+                action=action,
+                corrected_skill_id=corrected_skill_id,
+                corrected_recency=corrected_recency,
+                corrected_evidence_type=corrected_evidence_type,
+                note=note,
+                run_id=t.run_id,
+            )
+            state.corrections.append(correction)
+            new_corrections.append(correction)
+
+            flag.resolved = True
+            flag.correction_id = correction.correction_id
+            dirty_traces[t.run_id] = t
+
+            console.print(f"  [green]✓[/green] Recorded: [bold]{action}[/bold]\n")
+
+    except (KeyboardInterrupt, click.exceptions.Abort):
+        console.print("\n\n[yellow]Stopped early — saving progress so far.[/yellow]")
+
+    if new_corrections:
+        apply_evidence(state)
+        save_state(state)
+        for t in dirty_traces.values():
+            save_trace(t)
+        console.print(
+            f"[green]✓[/green] {len(new_corrections)} correction(s) saved. "
+            f"Skill graph recomputed. [dim](compass status to see the effect)[/dim]"
+        )
+    else:
+        console.print("[dim]No changes made.[/dim]")
+
+
+# ── compass corrections ──────────────────────────────────────────────────────
+
+@cli.group()
+def corrections() -> None:
+    """Manage persisted evidence corrections from `compass review`."""
+
+
+_ACTION_STYLE = {"accept": "green", "downgrade": "yellow", "reject": "red", "correct": "cyan"}
+
+
+@corrections.command("list")
+@click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
+def corrections_list(learner_id: str | None) -> None:
+    """List all persisted evidence corrections for a learner."""
+    from .memory.store import load_state
+
+    lid = resolve_learner_id(learner_id)
+    state = load_state(lid)
+    if state is None:
+        console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    if not state.corrections:
+        console.print("\n[dim]No corrections recorded yet. Run [bold]compass review[/bold].[/dim]")
+        return
+
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
+    table.add_column("Skill", min_width=24)
+    table.add_column("Repo", min_width=14)
+    table.add_column("Action", min_width=10)
+    table.add_column("Correction", min_width=24, style="dim")
+    table.add_column("Note", min_width=20, style="dim")
+    table.add_column("Date", min_width=10)
+
+    for c in sorted(state.corrections, key=lambda c: c.created_at, reverse=True):
+        style = _ACTION_STYLE.get(c.action, "")
+        correction_str = ""
+        if c.action == "correct":
+            parts = []
+            if c.corrected_skill_id:
+                parts.append(f"skill→{c.corrected_skill_id}")
+            if c.corrected_recency:
+                parts.append(f"recency→{c.corrected_recency}")
+            if c.corrected_evidence_type:
+                parts.append(f"type→{c.corrected_evidence_type}")
+            correction_str = "  ".join(parts)
+        table.add_row(
+            _skill_name(c.skill_id),
+            c.source_repo or "[dim](all repos)[/dim]",
+            f"[{style}]{c.action}[/{style}]",
+            correction_str,
+            c.note,
+            c.created_at.strftime("%Y-%m-%d"),
+        )
+
+    console.print()
+    console.print(table)
 
 
 def _skill_name(skill_id: str) -> str:

@@ -119,6 +119,7 @@ class ScanResult:
     files_scanned: int
     repo_name: str
     errors: list[str] = field(default_factory=list)
+    files_inventory: list[dict] = field(default_factory=list)  # [{"path", "trust"}] — for trace/observability only
 
     @property
     def by_level(self) -> dict[str, list[SkillEvidence]]:
@@ -343,4 +344,5 @@ def scan_repo(repo_path: Path) -> ScanResult:
         files_scanned=len(files),
         repo_name=repo_name,
         errors=errors,
+        files_inventory=[{"path": f.rel_path, "trust": f.trust} for f in files],
     )

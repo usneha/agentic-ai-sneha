@@ -9,6 +9,7 @@ from pathlib import Path
 from ..config import LEARNERS_DIR
 from ..models import (
     CurriculumModule,
+    EvidenceCorrection,
     GitHubCache,
     JournalEntry,
     LearnerProfile,
@@ -16,6 +17,7 @@ from ..models import (
     LLMRepoAssessment,
     Milestone,
     Override,
+    RunTrace,
     SkillEvidence,
     SkillScore,
 )
@@ -86,6 +88,11 @@ def load_state(learner_id: str) -> LearnerState | None:
     if ev_file.exists():
         evidence = [SkillEvidence.model_validate(e) for e in json.loads(ev_file.read_text())]
 
+    corrections: list[EvidenceCorrection] = []
+    corr_file = d / "corrections.json"
+    if corr_file.exists():
+        corrections = [EvidenceCorrection.model_validate(c) for c in json.loads(corr_file.read_text())]
+
     return LearnerState(
         profile=profile,
         evidence=evidence,
@@ -97,6 +104,7 @@ def load_state(learner_id: str) -> LearnerState | None:
         overrides=overrides,
         modules=modules,
         llm_assessments=llm_assessments,
+        corrections=corrections,
     )
 
 
@@ -131,6 +139,10 @@ def save_state(state: LearnerState) -> None:
     _atomic_write(
         d / "overrides.json",
         [o.model_dump(mode="json") for o in state.overrides],
+    )
+    _atomic_write(
+        d / "corrections.json",
+        [c.model_dump(mode="json") for c in state.corrections],
     )
 
     if state.modules:
@@ -171,3 +183,39 @@ def list_learners() -> list[str]:
         d.name for d in LEARNERS_DIR.iterdir()
         if d.is_dir() and not d.name.endswith(".backup")
     )
+
+
+# ── Run traces ──────────────────────────────────────────────────────────────
+
+def _runs_dir(learner_id: str) -> Path:
+    return learner_dir(learner_id) / "runs"
+
+
+def save_trace(trace: RunTrace) -> Path:
+    path = _runs_dir(trace.learner_id) / f"{trace.run_id}.json"
+    _atomic_write(path, trace.model_dump(mode="json"))
+    return path
+
+
+def load_trace(learner_id: str, run_id: str) -> RunTrace | None:
+    path = _runs_dir(learner_id) / f"{run_id}.json"
+    if not path.exists():
+        return None
+    return RunTrace.model_validate_json(path.read_text())
+
+
+def find_trace(run_id: str) -> RunTrace | None:
+    """Locate a trace by run_id without knowing which learner it belongs to."""
+    if not LEARNERS_DIR.exists():
+        return None
+    for match in LEARNERS_DIR.glob(f"*/runs/{run_id}.json"):
+        return RunTrace.model_validate_json(match.read_text())
+    return None
+
+
+def list_traces(learner_id: str) -> list[RunTrace]:
+    d = _runs_dir(learner_id)
+    if not d.exists():
+        return []
+    traces = [RunTrace.model_validate_json(f.read_text()) for f in d.glob("*.json")]
+    return sorted(traces, key=lambda t: t.started_at, reverse=True)

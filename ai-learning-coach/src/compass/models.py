@@ -48,6 +48,7 @@ class SkillEvidence(BaseModel):
     confidence: int  # 0–100
     source_repo: Optional[str] = None
     source_path: Optional[str] = None
+    source: Literal["scan", "llm"] = "scan"  # provenance — corrections from `compass review` only ever target "llm"
     rationale: str = ""
     recorded_at: datetime = Field(default_factory=_now)
 
@@ -153,6 +154,69 @@ class LLMRepoAssessment(BaseModel):
     error: Optional[str] = None
 
 
+class ToolCallRecord(BaseModel):
+    step: str                                  # tool/step name, e.g. "repo_scan"
+    started_at: datetime = Field(default_factory=_now)
+    duration_ms: int = 0
+    inputs: dict = Field(default_factory=dict)   # summarized inputs, not full payloads
+    outputs: dict = Field(default_factory=dict)  # summarized outputs
+    error: Optional[str] = None
+
+
+class DivergenceFlag(BaseModel):
+    skill_id: str
+    llm_confidence: float
+    deterministic_score: float
+    reason: str
+    resolved: bool = False
+    correction_id: Optional[str] = None
+
+
+CorrectionAction = Literal["accept", "downgrade", "reject", "correct"]
+
+
+class EvidenceCorrection(BaseModel):
+    """A user decision from `compass review`, applied as a transform at aggregation
+    time. Keyed by (skill_id, source_repo) so it survives repo rescans even though
+    individual SkillEvidence records are replaced on every scan/analyze pass.
+    source_repo=None means the correction applies to this skill everywhere.
+    """
+    correction_id: str = Field(default_factory=_uuid)
+    skill_id: str
+    source_repo: Optional[str] = None
+    action: CorrectionAction
+    corrected_skill_id: Optional[str] = None
+    corrected_recency: Optional[str] = None
+    corrected_evidence_type: Optional[str] = None
+    note: str = ""
+    run_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=_now)
+
+
+class SkillAggregationTrace(BaseModel):
+    skill_id: str
+    contributions: list[dict] = Field(default_factory=list)  # per-record breakdown
+    current_score: float = 0.0
+    experience_score: float = 0.0
+
+
+class RunTrace(BaseModel):
+    run_id: str = Field(default_factory=_uuid)
+    learner_id: str
+    repo_name: str
+    repo_path: str
+    started_at: datetime = Field(default_factory=_now)
+    completed_at: Optional[datetime] = None
+    steps: list[ToolCallRecord] = Field(default_factory=list)
+    files_sampled: list[str] = Field(default_factory=list)
+    llm_prompt: str = ""
+    llm_response: str = ""
+    evidence_created: list[SkillEvidence] = Field(default_factory=list)
+    divergence_flags: list[DivergenceFlag] = Field(default_factory=list)
+    aggregation: list[SkillAggregationTrace] = Field(default_factory=list)
+    recommendation_summary: dict = Field(default_factory=dict)
+
+
 class GitHubCache(BaseModel):
     last_scan: datetime = Field(default_factory=_now)
     repos: list[str] = Field(default_factory=list)
@@ -207,6 +271,7 @@ class LearnerState(BaseModel):
     overrides: list[Override] = Field(default_factory=list)
     modules: dict[str, CurriculumModule] = Field(default_factory=dict)
     llm_assessments: list[LLMRepoAssessment] = Field(default_factory=list)
+    corrections: list[EvidenceCorrection] = Field(default_factory=list)
 
     @property
     def is_new_learner(self) -> bool:
