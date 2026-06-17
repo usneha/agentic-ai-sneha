@@ -12,6 +12,29 @@ Design principles:
     architectural or behavioral match. Contextual-only = not credited.
   - Contextual signals are suppressed when architectural is already present
     (no stacking on top of structural proof).
+
+Future: probabilistic LLM-based skill inference
+  The current scanner is fully deterministic — regex patterns against
+  classified files. This is fast, auditable, and runs on every scan with
+  no API cost.
+
+  A future enhancement would add an optional LLM deep-analysis pass:
+    1. One-time (or periodic) setup: user runs `compass analyze --deep REPO`.
+       An LLM reads a curated subset of the repo (entry points, key modules,
+       config files — not vendored code) and produces a probabilistic skill
+       assessment with reasoning traces.
+    2. The LLM output is stored as a separate evidence source
+       (e.g. signal_type "llm_inferred") with its own weight and confidence.
+    3. Subsequent `compass scan` runs stay deterministic. The LLM assessment
+       acts as a one-time prior that the regex signals update on top of.
+    4. The user can re-run deep analysis periodically (e.g. after a major
+       feature) to refresh the prior.
+
+  This layering keeps the fast path cheap and the slow path opt-in. The
+  deterministic signals remain the ground truth for ongoing tracking;
+  the LLM pass adds depth for ambiguous or novel codebases where regex
+  patterns would miss intent (e.g. a custom agent loop that doesn't use
+  LangGraph, or an eval harness built from scratch).
 """
 from __future__ import annotations
 
