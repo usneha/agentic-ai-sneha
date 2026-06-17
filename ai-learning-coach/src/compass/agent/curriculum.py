@@ -87,7 +87,7 @@ def _build_prompt(state: LearnerState, milestone: Milestone) -> str:
 
     skills_str = ", ".join(milestone.target_skills)
     skill_scores = {
-        sid: state.skill_graph[sid].score
+        sid: state.skill_graph[sid].effective_score
         for sid in milestone.target_skills
         if sid in state.skill_graph
     }
