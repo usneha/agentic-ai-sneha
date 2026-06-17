@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.table import Table
 from rich import box
 
@@ -1274,3 +1275,242 @@ def _print_milestone_status(state: LearnerState) -> None:
                 "[dim]Run [bold]compass recommend[/bold] to get your next milestone.[/dim]"
             )
     console.print()
+
+
+# ── compass profile ───────────────────────────────────────────────────────────
+
+_ZONE_BADGE = {
+    "core":     "[green]● CORE[/green]",
+    "dormant":  "[yellow]○ DORMANT[/yellow]",
+    "learning": "[dim]· LEARNING[/dim]",
+}
+_ZONE_SORT  = {"core": 0, "dormant": 1, "learning": 2, "none": 3}
+_ZONE_STYLE = {"core": "green", "dormant": "yellow", "learning": "dim"}
+
+
+def _zone(current: float, experience: float) -> str:
+    if current >= 0.50:
+        return "core"
+    if experience >= 0.40:
+        return "dormant"
+    if current > 0.0 or experience > 0.0:
+        return "learning"
+    return "none"
+
+
+def _print_profile_matrix(state: LearnerState) -> None:
+    from collections import Counter
+    from . import _data
+
+    sg = state.skill_graph
+    domain_map = _data.skill_domain_map()
+
+    evidenced = [
+        (sid, ss, _zone(ss.current_score, ss.experience_score))
+        for sid, ss in sg.items()
+        if ss.current_score > 0 or ss.experience_score > 0
+    ]
+    if not evidenced:
+        console.print("[yellow]No evidence yet. Run [bold]compass scan[/bold] first.[/yellow]")
+        return
+
+    evidenced.sort(key=lambda x: (_ZONE_SORT[x[2]], -x[1].experience_score))
+    counts = Counter(z for _, _, z in evidenced)
+
+    parts = []
+    for z, label in [("core", "core"), ("dormant", "dormant"), ("learning", "learning")]:
+        if counts[z]:
+            badge = _ZONE_BADGE[z]
+            parts.append(f"[bold]{counts[z]}[/bold] {badge}")
+    console.print()
+    console.print(f"[bold]{len(evidenced)}[/bold] evidenced skills  ·  " + "  ·  ".join(parts))
+    console.print()
+
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold", padding=(0, 1))
+    table.add_column("Skill", min_width=32, no_wrap=True)
+    table.add_column("Current", justify="right", min_width=8)
+    table.add_column("Exp.", justify="right", min_width=6)
+    table.add_column("Zone", min_width=14, no_wrap=True)
+
+    section_labels = {"core": "Core Strength", "dormant": "Dormant Skills", "learning": "Learning"}
+    current_zone = None
+    for sid, ss, z in evidenced:
+        if z != current_zone:
+            current_zone = z
+            table.add_row(f"[bold dim]{section_labels.get(z, z.title())}[/bold dim]", "", "", "")
+        table.add_row(
+            f"  {_skill_name(sid)}",
+            f"{ss.current_score:.2f}",
+            f"[dim]{ss.experience_score:.2f}[/dim]",
+            _ZONE_BADGE.get(z, ""),
+        )
+    console.print(table)
+
+    # Role-relevant gaps: base_score set but no evidence
+    gaps = [
+        sid for sid in _data.all_skill_ids()
+        if sid in sg
+        and sg[sid].current_score == 0
+        and sg[sid].experience_score == 0
+        and sg[sid].base_score > 0
+    ]
+    if gaps:
+        console.print()
+        console.print("[dim]Role-relevant gaps (no evidence yet):[/dim]")
+        names = "  ·  ".join(_skill_name(sid) for sid in sorted(gaps)[:8])
+        if len(gaps) > 8:
+            names += f"  +{len(gaps) - 8} more"
+        console.print(f"  [dim]{names}[/dim]")
+
+    console.print()
+    console.print("[dim]Run [bold]compass profile --detail[/bold] for evidence-backed competency cards.[/dim]")
+
+
+def _render_domain_card(
+    domain_name: str,
+    subs: list[dict],
+    sg: dict,
+    ev_by_skill: dict,
+    llm_by_skill: dict,
+    credit_map: dict | None = None,
+) -> None:
+    scores = [sg[sub["id"]] for sub in subs if sub["id"] in sg]
+    max_current = max((ss.current_score for ss in scores), default=0.0)
+    max_exp     = max((ss.experience_score for ss in scores), default=0.0)
+    z = _zone(max_current, max_exp)
+
+    console.print(Rule(title=f" {domain_name}  {_ZONE_BADGE.get(z, '')} ", style="bold dim"))
+
+    # Compact skill list — 3 per row
+    skill_parts = []
+    for sub in subs:
+        ss = sg.get(sub["id"])
+        if not ss:
+            continue
+        sz  = _zone(ss.current_score, ss.experience_score)
+        st  = _ZONE_STYLE.get(sz, "")
+        label = f"[{st}]{sub['name']}  {ss.current_score:.2f}[/{st}]" if st else f"{sub['name']}  {ss.current_score:.2f}"
+        skill_parts.append(label)
+
+    for i in range(0, len(skill_parts), 3):
+        console.print("  " + "   ·   ".join(skill_parts[i:i + 3]))
+
+    # Evidence block — group by source repo
+    all_ev = [ev for sub in subs for ev in ev_by_skill.get(sub["id"], [])]
+    if all_ev:
+        console.print()
+        by_repo: dict[str, list] = {}
+        for ev in all_ev:
+            by_repo.setdefault(ev.source_repo or "unknown", []).append(ev)
+
+        for repo, evs in sorted(by_repo.items()):
+            types    = " & ".join(sorted({ev.evidence_type for ev in evs}))
+            recency  = "/".join(sorted({ev.recency for ev in evs}))
+            max_conf = max(ev.confidence for ev in evs)
+            console.print(f"  [dim]{repo}  ·  {types}  ·  {recency}  ·  conf {max_conf}%[/dim]")
+
+            # LLM rationales from this repo for any skill in this domain
+            shown: set[str] = set()
+            for sub in subs:
+                for (llm_repo, rationale, needs_review) in llm_by_skill.get(sub["id"], []):
+                    if llm_repo == repo and rationale not in shown:
+                        shown.add(rationale)
+                        short = rationale if len(rationale) <= 110 else rationale[:107] + "..."
+                        flag  = " [yellow]⚠[/yellow]" if needs_review else ""
+                        console.print(f"    [italic dim]{short}[/italic dim]{flag}")
+
+    # No direct evidence (scores come from foundation credits or role prior)
+    if not all_ev and max_current > 0:
+        console.print()
+        console.print("  [dim]No direct evidence — scores reflect foundation credits or role prior[/dim]")
+
+    # Historical-only warning
+    if all_ev and all(ev.recency == "historical" for ev in all_ev):
+        console.print(f"  [yellow dim]All evidence is historical — no recent activity detected[/yellow dim]")
+
+    # Foundation credits
+    if credit_map:
+        credit_parts: list[str] = []
+        for sub in subs:
+            ss = sg.get(sub["id"])
+            if ss and ss.current_score > 0:
+                for ai_id, boost in credit_map.get(sub["id"], {}).items():
+                    credit_parts.append(f"{ai_id.split('.')[-1]} +{boost:.2f}")
+        if credit_parts:
+            console.print(f"  [dim]→ credits AI skills:  {'  ·  '.join(credit_parts)}[/dim]")
+
+    console.print()
+
+
+def _print_competency_cards(state: LearnerState) -> None:
+    from . import _data
+
+    sg = state.skill_graph
+
+    llm_by_skill: dict[str, list[tuple[str, str, bool]]] = {}
+    for assessment in state.llm_assessments:
+        for skill in assessment.skills:
+            if skill.rationale:
+                llm_by_skill.setdefault(skill.skill_id, []).append(
+                    (assessment.repo_name, skill.rationale, skill.needs_review)
+                )
+
+    ev_by_skill: dict[str, list] = {}
+    for ev in state.evidence:
+        ev_by_skill.setdefault(ev.skill_id, []).append(ev)
+
+    console.print()
+    for d in _data.domains():
+        evidenced = [
+            sub for sub in _data.sub_skills_by_domain(d["id"])
+            if sub["id"] in sg and (sg[sub["id"]].current_score > 0 or sg[sub["id"]].experience_score > 0)
+        ]
+        if evidenced:
+            _render_domain_card(d["name"], evidenced, sg, ev_by_skill, llm_by_skill)
+
+    foundation_subs = [
+        sub
+        for fdom in _data.foundation_domains()
+        for sub in fdom["sub_skills"]
+        if sub["id"] in sg and (sg[sub["id"]].current_score > 0 or sg[sub["id"]].experience_score > 0)
+    ]
+    if foundation_subs:
+        _render_domain_card(
+            "Foundation Skills",
+            foundation_subs,
+            sg,
+            ev_by_skill,
+            llm_by_skill,
+            credit_map=_data.foundation_credit_map(),
+        )
+
+
+@cli.command()
+@click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
+@click.option("--detail", is_flag=True, default=False, help="Evidence-backed competency cards.")
+def profile(learner_id: str | None, detail: bool) -> None:
+    """Skill profile with evidence provenance.
+
+    Default: current vs experience matrix with zone classification.
+    --detail: evidence-backed competency cards per domain.
+    """
+    from .memory.store import load_state
+
+    lid = resolve_learner_id(learner_id)
+    state = load_state(lid)
+    if state is None:
+        console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    if not state.evidence:
+        console.print(
+            "[yellow]No evidence yet. Run [bold]compass scan --repo <path>[/bold] first.[/yellow]"
+        )
+        return
+
+    _print_header(state.profile)
+
+    if detail:
+        _print_competency_cards(state)
+    else:
+        _print_profile_matrix(state)
