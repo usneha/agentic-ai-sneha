@@ -314,7 +314,7 @@ def scan_repo(repo_path: Path) -> ScanResult:
             found.append(SkillEvidence(
                 skill_id=skill_id,
                 evidence_type="observed",
-                recency="current",
+                recency="unknown",
                 confidence=_EVIDENCE_CONFIDENCE["strong"],
                 source_repo=repo_name,
             ))
@@ -323,7 +323,7 @@ def scan_repo(repo_path: Path) -> ScanResult:
             found.append(SkillEvidence(
                 skill_id=skill_id,
                 evidence_type="observed",
-                recency="current",
+                recency="unknown",
                 confidence=_EVIDENCE_CONFIDENCE["moderate"],
                 source_repo=repo_name,
             ))
@@ -333,7 +333,7 @@ def scan_repo(repo_path: Path) -> ScanResult:
             found.append(SkillEvidence(
                 skill_id=skill_id,
                 evidence_type="inferred",
-                recency="current",
+                recency="unknown",
                 confidence=_EVIDENCE_CONFIDENCE["weak"],
                 source_repo=repo_name,
             ))

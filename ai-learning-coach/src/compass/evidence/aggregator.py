@@ -11,10 +11,10 @@ from __future__ import annotations
 from ..models import SkillEvidence
 
 _CURRENT_TYPE_WEIGHT    = {"observed": 1.0, "inferred": 0.5, "synthesized": 0.3}
-_CURRENT_RECENCY_WEIGHT = {"current": 1.0,  "historical": 0.5}
+_CURRENT_RECENCY_WEIGHT = {"current": 1.0, "unknown": 0.70, "historical": 0.5}
 
 _EXPERIENCE_TYPE_WEIGHT    = {"observed": 1.0, "inferred": 0.7, "synthesized": 0.4}
-_EXPERIENCE_RECENCY_WEIGHT = {"current": 1.0,  "historical": 0.9}
+_EXPERIENCE_RECENCY_WEIGHT = {"current": 1.0, "unknown": 0.95, "historical": 0.9}
 
 
 def _combine(contribs: list[float]) -> float:

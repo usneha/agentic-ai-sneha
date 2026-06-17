@@ -1120,6 +1120,27 @@ def analyze(repo_path: str, learner_id: str | None) -> None:
     # Apply divergence + evidence-quality guardrails before saving
     apply_guardrails(result, state.skill_graph)
 
+    # Backfill scanner evidence recency using LLM repo_recency classification
+    if result.repo_recency in ("current", "historical"):
+        for ev in state.evidence:
+            if ev.source_repo == result.repo_name and ev.recency == "unknown":
+                ev.recency = result.repo_recency
+
+    # Per-skill override: LLM evidence_type refines recency beyond the repo-level default
+    skill_recency: dict[str, str] = {}
+    for skill in result.skills:
+        if skill.evidence_type == "current_demonstrated":
+            skill_recency[skill.skill_id] = "current"
+        elif skill.evidence_type == "historical_experience":
+            skill_recency[skill.skill_id] = "historical"
+    for ev in state.evidence:
+        if ev.source_repo == result.repo_name and ev.skill_id in skill_recency:
+            ev.recency = skill_recency[ev.skill_id]
+
+    # Re-aggregate scores so profile reflects updated recency weights
+    from .competency.assessor import apply_evidence
+    apply_evidence(state)
+
     # Replace any existing assessment for this repo
     state.llm_assessments = [a for a in state.llm_assessments if a.repo_name != result.repo_name]
     state.llm_assessments.append(result)

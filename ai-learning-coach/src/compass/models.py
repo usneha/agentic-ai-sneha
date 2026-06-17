@@ -44,7 +44,7 @@ class SkillEvidence(BaseModel):
     evidence_id: str = Field(default_factory=_uuid)
     skill_id: str
     evidence_type: Literal["observed", "inferred", "synthesized"]
-    recency: Literal["current", "historical"]
+    recency: Literal["current", "historical", "unknown"]
     confidence: int  # 0–100
     source_repo: Optional[str] = None
     source_path: Optional[str] = None
@@ -148,6 +148,7 @@ class LLMRepoAssessment(BaseModel):
     assessed_at: datetime = Field(default_factory=_now)
     skills: list[LLMSkillAssessment] = Field(default_factory=list)
     repo_summary: str = ""
+    repo_recency: Literal["current", "historical", "unknown"] = "unknown"
     model: str = ""
     error: Optional[str] = None
 

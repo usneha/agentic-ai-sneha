@@ -173,11 +173,17 @@ Rules:
 - inferred_exposure confidence must be < 0.5
 - Set historical_experience when you see clear markers of age (e.g. PHP 5 style, jQuery 1.x, Python 2, deprecated AWS SDK v1 patterns)
 
+Also classify repo_recency:
+- "current"    — modern library versions (2022+), recent dates in code/docs, up-to-date APIs
+- "historical" — dated patterns: PHP 5 style, jQuery 1.x, Python 2, deprecated SDKs, pre-2020 tooling
+- "unknown"    — cannot determine from available context
+
 Also write repo_summary: 2–3 sentences on what the repo does, its tech stack, and approximate maturity/age.
 
 Return ONLY valid JSON, no markdown fences:
 {{
   "repo_summary": "string",
+  "repo_recency": "current",
   "skills": [
     {{"skill_id": "string", "confidence": 0.0, "evidence_type": "string", "rationale": "string"}}
   ]
@@ -287,10 +293,14 @@ def assess_repo(repo_path: Path) -> LLMRepoAssessment:
                 rationale=s.get("rationale", ""),
             ))
 
+        raw_recency = data.get("repo_recency", "unknown")
+        repo_recency = raw_recency if raw_recency in {"current", "historical", "unknown"} else "unknown"
+
         return LLMRepoAssessment(
             repo_name=repo_name,
             skills=skills,
             repo_summary=data.get("repo_summary", ""),
+            repo_recency=repo_recency,
             model=OPENAI_MODEL,
         )
 
