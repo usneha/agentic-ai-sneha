@@ -1,5 +1,13 @@
 # Archetype taxonomy for `compass profile`.
 #
+# This is a Compass-maintained taxonomy, not a per-user customization
+# surface. It's YAML (rather than inline in narrative.py) so it can evolve
+# without code changes as the skill model grows — not so individual users
+# can define their own archetypes. The moment archetypes become
+# user-defined, profiles stop being comparable/portable across builders,
+# which defeats the point of having a shared taxonomy at all. There is
+# deliberately no `compass add-archetype` (or similar) command.
+#
 # Hierarchy: Skill -> (Domain | explicit skill) -> Archetype.
 #
 # Archetypes describe the *type of system* a builder is creating, not their
