@@ -49,6 +49,7 @@ class SkillEvidence(BaseModel):
     source_repo: Optional[str] = None
     source_path: Optional[str] = None
     source: Literal["scan", "llm"] = "scan"  # provenance — corrections from `compass review` only ever target "llm"
+    matched_signals: list[str] = Field(default_factory=list)  # human-readable pattern descriptions (scan-sourced only)
     rationale: str = ""
     recorded_at: datetime = Field(default_factory=_now)
 
@@ -220,6 +221,7 @@ class RunTrace(BaseModel):
 class GitHubCache(BaseModel):
     last_scan: datetime = Field(default_factory=_now)
     repos: list[str] = Field(default_factory=list)
+    repo_chronology: dict[str, dict[str, Optional[str]]] = Field(default_factory=dict)  # repo_name -> {"first_commit_date", "last_commit_date"}
     latest_signals: list[ParsedSignal] = Field(default_factory=list)
     files_scanned: int = 0
     scan_errors: list[str] = Field(default_factory=list)

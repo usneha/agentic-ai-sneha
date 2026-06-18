@@ -29,6 +29,40 @@ def role_requirements() -> dict:
     return yaml.safe_load((COMPETENCY_DIR / "role_requirements.yaml").read_text())
 
 
+@lru_cache(maxsize=None)
+def archetypes() -> dict:
+    return yaml.safe_load((COMPETENCY_DIR / "archetypes.yaml").read_text())
+
+
+@lru_cache(maxsize=None)
+def skill_archetype_map() -> dict[str, str]:
+    """Returns {ai_skill_id: archetype_id}, resolving explicit `skills:` entries
+
+    before domain-level `domains:` fallback. Raises if any AI-domain skill
+    (from skills.yaml) isn't covered by some archetype's contributing block —
+    a newly added skill must be explicitly placed in the taxonomy, not
+    silently dropped from archetype scoring.
+    """
+    arch_data = archetypes()["archetypes"]
+    domain_map = skill_domain_map()
+
+    result: dict[str, str] = {}
+    # Domain-level coverage first, so explicit skill entries can override it.
+    for arch in arch_data:
+        for dom_id in arch.get("contributing", {}).get("domains", []):
+            for skill_id, skill_dom in domain_map.items():
+                if skill_dom == dom_id:
+                    result[skill_id] = arch["id"]
+    for arch in arch_data:
+        for skill_id in arch.get("contributing", {}).get("skills", []):
+            result[skill_id] = arch["id"]
+
+    uncovered = set(all_skill_ids()) - set(result)
+    if uncovered:
+        raise ValueError(f"Skills not covered by any archetype: {sorted(uncovered)}")
+    return result
+
+
 def all_skill_ids() -> list[str]:
     return [sub["id"] for domain in skills()["domains"] for sub in domain["sub_skills"]]
 

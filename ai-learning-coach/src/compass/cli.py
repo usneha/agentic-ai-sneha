@@ -902,6 +902,7 @@ def _print_module(mod: "CurriculumModule") -> None:  # type: ignore[name-defined
 
 _STEP_LABELS = {
     "repo_scan": "Repo Scan (deterministic)",
+    "repo_chronology": "Repo Chronology (git log)",
     "repo_analyze": "Repo Analyze (LLM)",
     "divergence_check": "Divergence Check",
     "evidence_update": "Evidence Update",
@@ -918,6 +919,11 @@ def _format_step_line(step) -> str:
     detail = ""
     if step.step == "repo_scan":
         detail = f"{out.get('files_scanned', 0)} files  ·  {out.get('deterministic_evidence_records', 0)} evidence records"
+    elif step.step == "repo_chronology":
+        if out.get("is_git_repo") and out.get("first_commit_date"):
+            detail = f"{out.get('first_commit_date')} → {out.get('last_commit_date')}"
+        else:
+            detail = "not a git repo — no chronology"
     elif step.step == "repo_analyze":
         detail = f"{out.get('skills_assessed', 0)} skills assessed  ·  recency: {out.get('repo_recency', 'unknown')}"
     elif step.step == "divergence_check":
@@ -1455,14 +1461,103 @@ def analyze(repo_path: str, learner_id: str | None) -> None:
 
 # ── compass explain ───────────────────────────────────────────────────────────
 
+def _gather_all_flags_for_skill(learner_id: str, skill_id: str):
+    """Return [(trace, flag), ...] for ALL divergence flags (resolved + unresolved) for one skill."""
+    from .memory.store import list_traces
+
+    pairs = []
+    for t in list_traces(learner_id):
+        for flag in t.divergence_flags:
+            if flag.skill_id == skill_id:
+                pairs.append((t, flag))
+    return pairs
+
+
+def _print_skill_explanation(state: LearnerState, skill_id: str, learner_id: str) -> None:
+    from .agent.narrative import confidence_label, zone
+
+    if skill_id not in state.skill_graph:
+        console.print(f"\n[yellow]Compass has no evidence for [bold]{skill_id}[/bold].[/yellow]")
+        return
+
+    score = state.skill_graph[skill_id]
+    records = [e for e in state.evidence if e.skill_id == skill_id]
+
+    console.print()
+    console.print(Panel.fit(f"Why {_skill_name(skill_id)}?", style="bold blue"))
+
+    if not records:
+        console.print(
+            "\n[dim]No direct evidence records — this score reflects foundation credits "
+            "or a role prior, not a scanned/analyzed repo.[/dim]"
+        )
+    else:
+        by_repo: dict[str, list] = {}
+        for ev in records:
+            by_repo.setdefault(ev.source_repo or "unknown", []).append(ev)
+
+        console.print("\n[bold]Evidence Sources[/bold]")
+        for repo_name, evs in sorted(by_repo.items()):
+            console.print(f"\n  [bold]{repo_name}[/bold]")
+            scan_descs: list[str] = []
+            for ev in evs:
+                if ev.source == "scan":
+                    for d in ev.matched_signals:
+                        if d not in scan_descs:
+                            scan_descs.append(d)
+            for d in scan_descs:
+                console.print(f"    • {d}")
+            for ev in evs:
+                if ev.source == "llm" and ev.rationale:
+                    console.print(f"    • [dim][LLM-inferred][/dim] {ev.rationale}")
+            if not scan_descs and not any(ev.source == "llm" and ev.rationale for ev in evs):
+                console.print("    [dim](evidence recorded, no detailed signal text available)[/dim]")
+
+    z = zone(score.current_score, score.experience_score)
+    conf = confidence_label(score.current_score)
+    console.print(f"\n[bold]Confidence[/bold]")
+    conf_color = _confidence_color(conf)
+    console.print(
+        f"  [{conf_color}]{conf.title()}[/{conf_color}]  "
+        f"[dim](current {score.current_score:.2f}, experience {score.experience_score:.2f})[/dim]"
+    )
+
+    n_repos = len({e.source_repo for e in records if e.source_repo})
+    console.print("\n[bold]Reasoning[/bold]")
+    if records:
+        console.print(
+            f"  Classified as {z} with {conf} confidence, based on "
+            f"{len(records)} evidence record(s) across {n_repos} repo(s)."
+        )
+    else:
+        console.print(f"  Classified as {z} with {conf} confidence from non-evidence sources.")
+
+    flags = _gather_all_flags_for_skill(learner_id, skill_id)
+    if flags:
+        console.print("\n[bold]Divergence Flags[/bold]")
+        for t, f in flags:
+            if f.resolved:
+                marker = "[dim](resolved)[/dim]"
+            else:
+                marker = "[yellow]⚠ unresolved[/yellow]"
+            console.print(
+                f"  {marker} {t.repo_name}: LLM {f.llm_confidence:.0%} vs "
+                f"deterministic {f.deterministic_score:.2f} — {f.reason}"
+            )
+    console.print()
+
+
 @cli.command()
+@click.argument("skill_id", required=False, default=None, metavar="SKILL")
 @click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
 @click.option("--repo", default=None, help="Filter to a specific repo name.")
-def explain(learner_id: str | None, repo: str | None) -> None:
-    """Show LLM assessments alongside deterministic skill scores.
+def explain(skill_id: str | None, learner_id: str | None, repo: str | None) -> None:
+    """Show why Compass believes a skill exists, or list LLM repo assessments.
 
-    Displays what the LLM inferred from each analyzed repo, the evidence type
-    (current / historical / inferred), and how it compares to deterministic scores.
+    With SKILL: explains exactly why Compass believes that skill is evidenced —
+    deterministic signals, LLM rationale, confidence, and any divergence flags.
+    Without SKILL: lists LLM assessments alongside deterministic skill scores
+    per analyzed repo (original behavior, optionally filtered by --repo).
     """
     from .memory.store import load_state
 
@@ -1470,6 +1565,10 @@ def explain(learner_id: str | None, repo: str | None) -> None:
     state = load_state(lid)
     if state is None:
         console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    if skill_id:
+        _print_skill_explanation(state, skill_id, lid)
         return
 
     assessments = state.llm_assessments
@@ -1795,13 +1894,66 @@ def _print_competency_cards(state: LearnerState) -> None:
         )
 
 
+def _print_profile_narrative(state: LearnerState) -> None:
+    from .agent.narrative import build_profile_narrative
+
+    narrative = build_profile_narrative(state)
+
+    console.print()
+    console.print(Panel.fit(narrative.archetype, title="Builder Archetype", title_align="left", style="bold blue"))
+
+    if narrative.secondary_clusters:
+        console.print("\n[bold]Secondary Focus[/bold]")
+        for c in narrative.secondary_clusters:
+            console.print(f"  • {c}")
+
+    if narrative.emerging_clusters:
+        console.print("\n[bold]Exploring[/bold]")
+        for c in narrative.emerging_clusters:
+            console.print(f"  • {c}")
+
+    if narrative.strengths:
+        console.print("\n[bold]Current Strengths[/bold]")
+        for s in narrative.strengths:
+            console.print(f"  • {s}")
+
+    if narrative.emerging:
+        console.print("\n[bold]Emerging Skills[/bold]")
+        for s in narrative.emerging:
+            console.print(f"  • {s}")
+
+    if narrative.foundation_skills or narrative.dormant_ai_skills:
+        console.print("\n[bold]Foundation Skills[/bold]")
+        if narrative.dormant_ai_skills:
+            if narrative.foundation_skills:
+                console.print("  [dim]Foundation:[/dim]")
+                for s in narrative.foundation_skills:
+                    console.print(f"    • {s}")
+            console.print("  [dim]Previously demonstrated (not recently reinforced):[/dim]")
+            for s in narrative.dormant_ai_skills:
+                console.print(f"    • {s}")
+        else:
+            for s in narrative.foundation_skills:
+                console.print(f"  • {s}")
+
+    console.print("\n[bold]Confidence Summary[/bold]")
+    console.print(f"  {narrative.confidence_summary}")
+
+    console.print("\n[bold]Recommended Direction[/bold]")
+    console.print(f"  {narrative.recommended_direction}")
+    console.print()
+
+
 @cli.command()
 @click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
 @click.option("--detail", is_flag=True, default=False, help="Evidence-backed competency cards.")
-def profile(learner_id: str | None, detail: bool) -> None:
-    """Skill profile with evidence provenance.
+@click.option("--matrix", is_flag=True, default=False, help="Raw current vs experience score matrix (old default view).")
+def profile(learner_id: str | None, detail: bool, matrix: bool) -> None:
+    """Builder profile: archetype, strengths, emerging skills, and direction.
 
-    Default: current vs experience matrix with zone classification.
+    Default: an evidence-grounded narrative (archetype, strengths, emerging
+    skills, foundation skills, confidence summary, recommended direction).
+    --matrix: raw current vs experience score matrix with zone classification.
     --detail: evidence-backed competency cards per domain.
     """
     from .memory.store import load_state
@@ -1822,5 +1974,56 @@ def profile(learner_id: str | None, detail: bool) -> None:
 
     if detail:
         _print_competency_cards(state)
-    else:
+    elif matrix:
         _print_profile_matrix(state)
+    else:
+        _print_profile_narrative(state)
+
+
+# ── compass story ─────────────────────────────────────────────────────────────
+
+def _print_story(narrative) -> None:
+    console.print()
+    console.print(Panel.fit("Your Builder Journey", style="bold blue"))
+    console.print()
+
+    if narrative.insufficient_history:
+        console.print(
+            "[yellow]Not enough repository history yet to build a chronological story.[/yellow]\n"
+            "[dim]Run [bold]compass run <repo>[/bold] against a git-tracked repo to begin.[/dim]"
+        )
+        console.print()
+        return
+
+    for chapter in narrative.chapters:
+        console.print(f"[bold]{chapter.year}[/bold]")
+        console.print(f"  {chapter.text}\n")
+
+    console.print("[bold]Today[/bold]")
+    console.print(f"  {narrative.today_text}\n")
+
+    console.print("[bold]Likely Next Frontier[/bold]")
+    console.print(f"  {narrative.next_frontier}")
+    console.print()
+
+
+@cli.command()
+@click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
+def story(learner_id: str | None) -> None:
+    """Chronological builder-journey narrative grounded in repo commit history.
+
+    Built from real git commit dates (compass run populates these) and
+    credited evidence per repo — never a fabricated timeline. If chronology
+    data isn't available yet, says so explicitly instead of guessing.
+    """
+    from .agent.narrative import build_story_narrative
+    from .memory.store import load_state
+
+    lid = resolve_learner_id(learner_id)
+    state = load_state(lid)
+    if state is None:
+        console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    narrative = build_story_narrative(state)
+    _print_story(narrative)

@@ -1,0 +1,106 @@
+# Archetype taxonomy for `compass profile`.
+#
+# Hierarchy: Skill -> (Domain | explicit skill) -> Archetype.
+#
+# Archetypes describe the *type of system* a builder is creating, not their
+# strongest individual skill or technique. Most domains roll up to an
+# archetype wholesale via `domains:` — a few domains (eval, agents,
+# deployment) are split at the skill level because they contain both
+# "general AI application" signal and "deep specialization" signal that
+# should not be lumped together (e.g. a golden-dataset check is a normal
+# part of building any AI app; a full evaluation-framework/experiment-
+# tracking setup is a specialization in its own right).
+#
+# Every AI-domain skill must be covered by exactly one archetype below
+# (via `domains:` or an explicit `skills:` entry) — narrative.py asserts
+# this at load time so a newly added skill in skills.yaml can't silently
+# fall through uncounted.
+
+archetypes:
+  - id: rag_systems_builder
+    name: "RAG Systems Builder"
+    contributing:
+      domains: [rag]
+    is_catchall: false
+
+  - id: ai_application_builder
+    name: "AI Application Builder"
+    description: >
+      General-purpose LLM application building: prompting, light evaluation,
+      SDK/API integration, basic single-agent orchestration. The default
+      identity for AI builders who haven't yet specialized into RAG, agent
+      systems, evaluation infrastructure, or production engineering.
+    contributing:
+      domains: [prompting]
+      skills:
+        - eval.datasets           # light eval: golden-dataset checks
+        - eval.generation_metrics # light eval: basic quality metrics
+        - agents.single_agent     # orchestration-lite: basic agent loop
+        - deployment.api          # SDK/API integration
+    is_catchall: true
+
+  - id: agent_systems_builder
+    name: "Agent Systems Builder"
+    contributing:
+      domains: [memory, mcp]
+      skills:
+        - agents.tool_use
+        - agents.decomposition
+        - agents.multi_agent
+        - agents.error_handling
+        - agents.hitl
+    is_catchall: false
+
+  - id: evaluation_systems_builder
+    name: "Evaluation Systems Builder"
+    contributing:
+      skills:
+        - eval.retrieval_metrics
+        - eval.experiment_tracking
+        - eval.ab_testing
+        - eval.frameworks
+    is_catchall: false
+
+  - id: infrastructure_builder
+    name: "Infrastructure Builder"
+    contributing:
+      domains: [observability]
+      skills:
+        - deployment.containers
+        - deployment.cicd
+        - deployment.latency
+        - deployment.cost
+        - deployment.infra
+    is_catchall: false
+
+# Reserved for future use — no current skill cluster maps here without
+# forcing an arbitrary split. Add a `contributing:` block and flip this
+# to active once a dedicated data-engineering skill cluster exists.
+# - id: data_systems_builder
+#   name: "Data Systems Builder"
+#   contributing: {}
+#   is_catchall: false
+
+selection:
+  # An archetype's aggregate (sum of current_score across its contributing
+  # skills) must clear this to be named as the primary archetype at all.
+  min_evidence: 0.50
+  # A specialized (non-catchall) archetype must beat the catchall's own
+  # total by this multiple to win the primary slot; otherwise the catchall
+  # wins by default, with the specialized signal surfaced as secondary.
+  catchall_dominance_margin: 1.3
+  # If the #2-ranked archetype's total is within this ratio of #1's, both
+  # are shown as co-primary instead of forcing a single winner.
+  co_primary_ratio: 0.85
+  # Existing secondary/exploring tiering, now applied at the archetype
+  # level instead of the raw domain level.
+  secondary_ratio: 0.5
+  max_secondary: 2
+  max_emerging: 2
+
+fallbacks:
+  # Foundation evidence exists, but zero evidence in any AI domain at all —
+  # this is NOT an AI-builder identity claim.
+  no_ai_evidence_with_foundation: "Software Builder — No AI Specialization Yet"
+  # Some AI-domain evidence exists, but no archetype clears min_evidence.
+  weak_ai_signal_below_minimum: "Early-Stage AI Builder"

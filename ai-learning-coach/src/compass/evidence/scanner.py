@@ -218,21 +218,26 @@ def _compile(pattern: str) -> re.Pattern:
     return re.compile("|".join(regexes), re.IGNORECASE | re.MULTILINE)
 
 
-def _matches_any(patterns: list, texts: list[str], errors: list[str], context: str) -> bool:
-    """Return True if any pattern matches any of the texts (per-text, not concatenated).
+def _matches_any(patterns: list, texts: list[str], errors: list[str], context: str) -> list[str]:
+    """Return the descriptions of all patterns that match any of the texts.
 
     Each text is matched independently so patterns cannot straddle file boundaries.
+    Empty list means no match — callers should treat that the same as the old
+    `False` return (truthiness is preserved for non-empty matches).
     """
+    matched_descriptions: list[str] = []
     for entry in patterns:
         pattern_str = entry["pattern"] if isinstance(entry, dict) else str(entry)
+        description = entry.get("description", "") if isinstance(entry, dict) else ""
         try:
             regex = _compile(pattern_str)
-            for text in texts:
-                if regex.search(text):
-                    return True
+            if any(regex.search(text) for text in texts):
+                # Fall back to the raw pattern if a description is ever missing,
+                # so a match is never silently lost from the truthiness check below.
+                matched_descriptions.append(description or pattern_str)
         except re.error as exc:
             errors.append(f"bad pattern {context}: {pattern_str!r} — {exc}")
-    return False
+    return matched_descriptions
 
 
 # ── Scanner ───────────────────────────────────────────────────────────────────
@@ -283,21 +288,26 @@ def scan_repo(repo_path: Path) -> ScanResult:
     }
 
     skill_levels: dict[str, set[str]] = {}
+    skill_descriptions: dict[str, dict[str, list[str]]] = {}  # skill_id -> level -> matched descriptions
 
     for skill_id in all_skill_ids() + all_foundation_skill_ids():
         github_patterns = skill_data.get(skill_id, {}).get("github", {})
         matched: set[str] = set()
+        descs_by_level: dict[str, list[str]] = {}
 
         for level in ("strong", "moderate", "weak"):
             level_patterns: list = github_patterns.get(level, [])
             if not level_patterns:
                 continue
             texts = level_texts[level]
-            if _matches_any(level_patterns, texts, errors, f"{skill_id}.{level}"):
+            found = _matches_any(level_patterns, texts, errors, f"{skill_id}.{level}")
+            if found:
                 matched.add(level)
+                descs_by_level[level] = found
 
         if matched:
             skill_levels[skill_id] = matched
+            skill_descriptions[skill_id] = descs_by_level
 
     # Apply minimum evidence gate and stacking rules, then emit evidence records
     found: list[SkillEvidence] = []
@@ -306,6 +316,7 @@ def scan_repo(repo_path: Path) -> ScanResult:
         has_arch = "strong" in matched
         has_behavioral = "moderate" in matched
         has_contextual = "weak" in matched
+        descs = skill_descriptions.get(skill_id, {})
 
         # Minimum evidence gate: must have architectural or behavioral to be credited
         if not has_arch and not has_behavioral:
@@ -318,6 +329,7 @@ def scan_repo(repo_path: Path) -> ScanResult:
                 recency="unknown",
                 confidence=_EVIDENCE_CONFIDENCE["strong"],
                 source_repo=repo_name,
+                matched_signals=descs.get("strong", []),
             ))
 
         if has_behavioral:
@@ -327,6 +339,7 @@ def scan_repo(repo_path: Path) -> ScanResult:
                 recency="unknown",
                 confidence=_EVIDENCE_CONFIDENCE["moderate"],
                 source_repo=repo_name,
+                matched_signals=descs.get("moderate", []),
             ))
 
         # Contextual only adds when behavioral present and architectural absent
@@ -337,6 +350,7 @@ def scan_repo(repo_path: Path) -> ScanResult:
                 recency="unknown",
                 confidence=_EVIDENCE_CONFIDENCE["weak"],
                 source_repo=repo_name,
+                matched_signals=descs.get("weak", []),
             ))
 
     return ScanResult(

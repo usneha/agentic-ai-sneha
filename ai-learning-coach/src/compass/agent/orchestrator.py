@@ -1,9 +1,10 @@
 """Agentic run pipeline for `compass run`.
 
-Orchestrates six steps against a single repo and produces a RunTrace
+Orchestrates seven steps against a single repo and produces a RunTrace
 recording what each step did, for `compass trace <run_id>`:
 
   1. repo_scan          — deterministic evidence + file inventory (scanner.py)
+  1b. repo_chronology    — real git commit dates, for `compass story` (repo_dates.py)
   2. repo_analyze       — lightweight LLM assessment (llm_assessor.py)
   3. divergence_check    — LLM-vs-deterministic guardrails (llm_assessor.apply_guardrails)
   4. evidence_update     — append SkillEvidence records to the persistent ledger
@@ -22,6 +23,7 @@ from pathlib import Path
 from ..competency.assessor import apply_evidence
 from ..competency.corrections import index_corrections
 from ..evidence.llm_assessor import apply_guardrails, assess_repo_traced
+from ..evidence.repo_dates import get_repo_chronology
 from ..evidence.scanner import scan_repo
 from ..models import (
     DivergenceFlag,
@@ -106,6 +108,21 @@ def run_pipeline(state: LearnerState, repo_path: Path) -> RunTrace:
         },
     )
 
+    # ── Step 1b: repo_chronology ──────────────────────────────────────────
+    # Pure git-log read, no LLM — grounds `compass story` in real commit
+    # history instead of an inferred/fictional timeline.
+    t0 = time.time()
+    chronology = get_repo_chronology(repo_path)
+    _step(
+        trace.steps, "repo_chronology", t0,
+        inputs={"repo_path": str(repo_path)},
+        outputs={
+            "is_git_repo": chronology.is_git_repo,
+            "first_commit_date": chronology.first_commit_date,
+            "last_commit_date": chronology.last_commit_date,
+        },
+    )
+
     # ── Step 2: repo_analyze (LLM) ───────────────────────────────────────
     t0 = time.time()
     llm_assessment, llm_debug = assess_repo_traced(repo_path)
@@ -170,6 +187,10 @@ def run_pipeline(state: LearnerState, repo_path: Path) -> RunTrace:
     cache = state.github_cache or GitHubCache()
     if repo_name not in cache.repos:
         cache.repos.append(repo_name)
+    cache.repo_chronology[repo_name] = {
+        "first_commit_date": chronology.first_commit_date,
+        "last_commit_date": chronology.last_commit_date,
+    }
     cache.files_scanned = scan_result.files_scanned
     cache.scan_errors = scan_result.errors
     cache.last_scan = _now()
