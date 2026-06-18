@@ -21,3 +21,6 @@ compass = "compass.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/compass"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

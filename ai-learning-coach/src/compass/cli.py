@@ -2027,3 +2027,77 @@ def story(learner_id: str | None) -> None:
 
     narrative = build_story_narrative(state)
     _print_story(narrative)
+
+
+# ── compass coach ─────────────────────────────────────────────────────────────
+
+def _print_coach(rec) -> None:
+    console.print()
+    console.print(Panel.fit("Compass Coach", style="bold blue"))
+
+    if rec.mode == "no_evidence":
+        console.print(f"\n[yellow]{rec.rationale}[/yellow]\n")
+        return
+
+    if rec.demonstrated:
+        console.print("\n[bold]What you've demonstrated[/bold]")
+        for s in rec.demonstrated:
+            console.print(f"  • {s}")
+        console.print(f"  [dim]Archetype: {rec.archetype}[/dim]")
+
+    if rec.close_to_next:
+        console.print("\n[bold]Also within reach right now[/bold]")
+        for s in rec.close_to_next:
+            console.print(f"  • {s}")
+
+    if rec.target_skill_name:
+        console.print(f"\n[bold]Learn next:[/bold] {rec.target_skill_name}  [dim]({rec.target_domain_name})[/dim]")
+        console.print(f"\n[bold]Why[/bold]\n  {rec.rationale}")
+        if rec.alternative_skill_name:
+            alt_line = f"  [dim]Alternative: {rec.alternative_skill_name}[/dim]"
+            if rec.alternative_rationale:
+                alt_line += f" [dim]— {rec.alternative_rationale}[/dim]"
+            console.print(f"\n{alt_line}")
+        if rec.build_suggestion:
+            console.print(f"\n[bold]What to build[/bold]\n  {rec.build_suggestion}")
+        if rec.confirming_evidence:
+            console.print("\n[bold]Evidence Compass will look for afterward[/bold]")
+            for e in rec.confirming_evidence:
+                console.print(f"  • {e}")
+        if rec.source == "llm":
+            console.print("\n[dim]Chosen by Compass Coach (AI-assisted, bounded to the planner's eligible/near-eligible set).[/dim]")
+        elif rec.mode == "normal":
+            reason = f" ({rec.fallback_reason})" if rec.fallback_reason else ""
+            console.print(f"\n[dim]Rule-based pick — AI coaching unavailable this run{reason}.[/dim]")
+    else:
+        console.print(f"\n{rec.rationale}")
+
+    console.print()
+
+
+@cli.command()
+@click.option("--learner-id", default=None, help="Learner ID (defaults to active learner).")
+def coach(learner_id: str | None) -> None:
+    """The coaching loop: what you've demonstrated, what to learn next, why, what to build, and what evidence will confirm it.
+
+    The deterministic planner (plan_next_milestone) bounds the search space —
+    eligible, near-eligible, and blocked-with-reasons skills. An LLM then
+    provides coaching judgment: which of exactly those candidates is the
+    best next step for this learner, and why. The LLM can never choose a
+    skill outside that bounded set, and never generates the build suggestion
+    or confirming evidence — those are always a deterministic lookup from
+    build_suggestions.yaml / evidence_signals.yaml for whichever skill is
+    chosen. Falls back to the planner's own top-priority pick if the LLM is
+    unavailable or its choice fails validation.
+    """
+    from .agent.coach import build_coaching_recommendation
+    from .memory.store import load_state
+
+    lid = resolve_learner_id(learner_id)
+    state = load_state(lid)
+    if state is None:
+        console.print(f"[red]Learner [bold]{lid}[/bold] not found.[/red]")
+        return
+
+    rec = build_coaching_recommendation(state)
+    _print_coach(rec)

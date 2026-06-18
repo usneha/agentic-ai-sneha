@@ -1,0 +1,228 @@
+# Build suggestions for `compass coach`.
+#
+# Compass-maintained product config, like archetypes.yaml — not a per-user
+# customization surface. Keyed by skill_id, one entry each.
+#
+# Each suggestion describes a concrete repo/project change, not generic
+# study advice ("read about RAG"). Every suggestion is written so that
+# following it produces a pattern Compass can actually detect afterward —
+# cross-check against evidence_signals.yaml's `github.strong`/`moderate`
+# descriptions for the same skill_id before adding or editing an entry.
+
+suggestions:
+  prompting.basic:
+    suggestion: >
+      Move your prompts out of inline strings into a dedicated prompts/
+      directory or named prompt constants, and structure messages with
+      explicit system/user roles instead of one flat string.
+  prompting.system:
+    suggestion: >
+      Extract your system prompt into a named constant or class
+      (e.g. SYSTEM_PROMPT) with a designed persona/instructions block,
+      separated from the rest of your application logic.
+  prompting.cot:
+    suggestion: >
+      Add an explicit chain-of-thought step to a prompt: instruct the model
+      to reason step-by-step before answering, and give that reasoning
+      block its own named section or variable.
+  prompting.structured:
+    suggestion: >
+      Define a Pydantic model (or JSON schema) for your LLM's output and
+      parse the response into it, instead of treating the raw text as the
+      final answer.
+  prompting.context_mgmt:
+    suggestion: >
+      Add explicit token counting before sending a request, and trim or
+      summarize older messages once the conversation approaches a context
+      budget you define.
+  prompting.iteration:
+    suggestion: >
+      Version your prompts — keep prior versions in named files or
+      constants (PROMPT_V1, PROMPT_V2) and add a small script that runs
+      both against the same inputs to compare them.
+
+  rag.embeddings:
+    suggestion: >
+      Add a vector store (Chroma/FAISS/Pinecone) and an embedding model
+      call that embeds your documents before storing them, instead of
+      searching raw text.
+  rag.chunking:
+    suggestion: >
+      Replace ad-hoc text splitting with a configured chunking strategy
+      (e.g. a recursive character text splitter) with explicit chunk size
+      and overlap parameters.
+  rag.retrieval_basic:
+    suggestion: >
+      Wire your vector store into a retriever with a configured top-k, and
+      call it from your generation step instead of stuffing the whole
+      corpus into the prompt.
+  rag.hybrid:
+    suggestion: >
+      Add a second retriever (BM25/keyword) alongside your vector
+      retriever and fuse the two result sets (e.g. RRF) instead of relying
+      on vector search alone.
+  rag.reranking:
+    suggestion: >
+      Add a cross-encoder reranker that re-scores your retriever's top
+      results before they reach the prompt, instead of using raw
+      similarity-search order.
+  rag.ingestion:
+    suggestion: >
+      Build a dedicated ingestion module that loads documents from
+      multiple sources and supports incremental/index updates, instead of
+      a one-off loading script.
+  rag.multimodal:
+    suggestion: >
+      Extend your RAG pipeline to embed and retrieve images (page
+      screenshots, diagrams) alongside text, using a vision-capable
+      embedding or retrieval model.
+
+  eval.datasets:
+    suggestion: >
+      Create a golden dataset file (e.g. eval_dataset.json) with
+      ground-truth question/answer pairs for your AI feature, built from
+      real or carefully constructed examples.
+  eval.retrieval_metrics:
+    suggestion: >
+      Write a script that computes retrieval metrics (precision@k,
+      recall@k, MRR) against your golden dataset, instead of spot-checking
+      results manually.
+  eval.generation_metrics:
+    suggestion: >
+      Add a generation-quality metric — faithfulness/groundedness scoring
+      via RAGAS or an LLM-as-judge pattern — run against your golden
+      dataset's expected answers.
+  eval.experiment_tracking:
+    suggestion: >
+      Initialize an experiment tracking tool (MLflow, W&B, or a structured
+      results log) and record metrics across the prompt/model variants you
+      try.
+  eval.ab_testing:
+    suggestion: >
+      Run two prompt or model variants against the same dataset and add a
+      statistical significance check before declaring one better.
+  eval.frameworks:
+    suggestion: >
+      Set up a named evaluation harness (DeepEval, promptfoo, or a custom
+      harness module) that runs your eval dataset through a defined
+      pipeline on demand.
+
+  agents.tool_use:
+    suggestion: >
+      Define explicit tools/functions with a JSON schema that your LLM can
+      call, and wire up the function-calling API instead of parsing free
+      text for actions.
+  agents.single_agent:
+    suggestion: >
+      Add an explicit agent loop with state and a planner step: the agent
+      chooses a tool, executes it, and loops until done, instead of a
+      single prompt-to-tool-call.
+  agents.decomposition:
+    suggestion: >
+      Add a planning step that breaks a user request into subtasks before
+      execution — a plan-and-execute pattern with an explicit task list.
+  agents.multi_agent:
+    suggestion: >
+      Split a single agent into a supervisor and specialized worker agents
+      that coordinate or route between each other on a task.
+  agents.error_handling:
+    suggestion: >
+      Add iteration limits, retry logic, and stuck/loop detection to your
+      agent loop so it recovers or fails gracefully instead of looping
+      forever.
+  agents.hitl:
+    suggestion: >
+      Add a human approval checkpoint before a risky agent action executes
+      — a confirmation step or interrupt before a tool call runs.
+
+  memory.conversation:
+    suggestion: >
+      Add a conversation memory class that persists chat history across
+      turns, instead of resending the full transcript by hand each time.
+  memory.episodic:
+    suggestion: >
+      Persist memory across sessions, not just within one conversation —
+      store summaries or facts keyed by user/session for recall later.
+  memory.external:
+    suggestion: >
+      Back your memory with an external store (Redis/Postgres) instead of
+      an in-process list, so memory survives restarts and scales beyond
+      one process.
+  memory.retrieval:
+    suggestion: >
+      Add semantic search over stored memories — embed and retrieve
+      relevant past facts instead of replaying the entire history.
+  memory.management:
+    suggestion: >
+      Add memory pruning or compression — summarize or expire old memory
+      entries once they exceed a size or age threshold.
+
+  mcp.concepts:
+    suggestion: >
+      Stand up a minimal MCP client that connects to an existing MCP
+      server and registers/calls one of its tools.
+  mcp.building:
+    suggestion: >
+      Build your own MCP server in a dedicated file, registering at least
+      one tool or resource and running it via the MCP server entrypoint.
+  mcp.integrations:
+    suggestion: >
+      Connect your MCP server to a real external system (a database,
+      filesystem, or third-party API) instead of a toy in-memory tool.
+  mcp.production:
+    suggestion: >
+      Add authentication, observability, and resilience (retries/timeouts)
+      to your MCP server deployment, instead of a local dev-only script.
+
+  deployment.api:
+    suggestion: >
+      Wrap your LLM logic in a FastAPI (or Flask) app with a named
+      endpoint and defined request/response schema, instead of calling it
+      from a notebook or script.
+  deployment.containers:
+    suggestion: >
+      Add a Dockerfile (and docker-compose.yml if multi-service) that
+      builds and runs your AI app, instead of relying on a local
+      environment.
+  deployment.cicd:
+    suggestion: >
+      Add a GitHub Actions workflow that runs tests/lint on push and,
+      ideally, deploys on merge to main.
+  deployment.latency:
+    suggestion: >
+      Switch a blocking LLM call to async/streaming, and add response
+      caching for repeated queries to cut perceived latency.
+  deployment.cost:
+    suggestion: >
+      Track token usage and estimated cost per request, and add logic that
+      picks a cheaper model when the task doesn't need the most capable
+      one.
+  deployment.infra:
+    suggestion: >
+      Move your deployment from a single script to infrastructure-as-code
+      (Kubernetes manifests or Terraform) with explicit scaling
+      configuration.
+
+  observability.tracing:
+    suggestion: >
+      Add LLM tracing (LangSmith, Phoenix, or OpenTelemetry spans) around
+      your model calls so you can inspect a full request's trace, not just
+      its final output.
+  observability.cost:
+    suggestion: >
+      Log token cost per request with a real cost calculation, and add an
+      alert or threshold for when spend exceeds an expected budget.
+  observability.quality:
+    suggestion: >
+      Add a production feedback loop — collect user feedback or run
+      periodic evaluation against live traffic samples to catch quality
+      drift.
+  observability.logging:
+    suggestion: >
+      Switch print statements to structured logging (e.g. structlog) with
+      correlation IDs, so a single request's logs can be traced
+      end-to-end.
+  observability.debugging:
+    suggestion: >
+      Add trace-based debugging tooling so you can inspect a failed LLM
+      request's full input/output chain, not just the final exception.

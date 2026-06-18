@@ -105,6 +105,34 @@ def foundation_credit_map() -> dict[str, dict[str, float]]:
     return result
 
 
+@lru_cache(maxsize=None)
+def _validated_build_suggestions() -> dict[str, str]:
+    """Load and validate build_suggestions.yaml: {skill_id: suggestion_text}.
+
+    Raises if any key isn't a real AI skill_id, or if an entry is missing a
+    non-empty `suggestion` — a typo'd or invented skill_id in this
+    maintainer-owned config should fail loudly, not silently miss.
+    """
+    raw = yaml.safe_load((COMPETENCY_DIR / "build_suggestions.yaml").read_text())
+    entries = raw.get("suggestions", {}) or {}
+    valid_ids = set(all_skill_ids())
+
+    result: dict[str, str] = {}
+    for skill_id, entry in entries.items():
+        if skill_id not in valid_ids:
+            raise ValueError(f"build_suggestions.yaml references unknown skill_id: {skill_id!r}")
+        suggestion = (entry or {}).get("suggestion", "").strip() if isinstance(entry, dict) else ""
+        if not suggestion:
+            raise ValueError(f"build_suggestions.yaml entry for {skill_id!r} is missing a non-empty 'suggestion'")
+        result[skill_id] = suggestion
+    return result
+
+
+def build_suggestion(skill_id: str) -> str | None:
+    """Return the curated build suggestion for an AI skill, or None if not yet covered."""
+    return _validated_build_suggestions().get(skill_id)
+
+
 def sub_skills_by_domain(domain_id: str) -> list[dict]:
     for d in skills()["domains"]:
         if d["id"] == domain_id:

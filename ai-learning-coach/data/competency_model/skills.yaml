@@ -69,10 +69,7 @@ domains:
     sub_skills:
       - id: eval.datasets
         name: Golden Dataset Construction
-        prerequisites: []
-        activation_gate:
-          any_of: [rag.retrieval_basic, agents.single_agent]
-          min_score: 0.3
+        prerequisites: [prompting.basic]
 
       - id: eval.retrieval_metrics
         name: Retrieval Metrics
@@ -174,10 +171,7 @@ domains:
     sub_skills:
       - id: deployment.api
         name: API Design for AI
-        prerequisites: []
-        activation_gate:
-          any_of: [rag.retrieval_basic, agents.single_agent]
-          min_score: 0.5
+        prerequisites: [prompting.basic]
 
       - id: deployment.containers
         name: Containerization
