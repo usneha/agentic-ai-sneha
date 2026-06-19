@@ -2101,3 +2101,193 @@ def coach(learner_id: str | None) -> None:
 
     rec = build_coaching_recommendation(state)
     _print_coach(rec)
+
+
+# ── compass learner ─────────────────────────────────────────────────────────
+# New learner-centered coaching path — runs alongside the skill_graph/planner
+# path above (compass run / recommend / coach), does not replace it. The
+# learner is the unit of analysis here: a persistent model built from
+# accumulated evidence across repos, docs, blogs, and reflections, not a
+# single repo's skill inventory. See HANDOFF.md.
+
+def _print_learner_profile(profile) -> None:
+    console.print()
+    console.print(Panel.fit(f"Learner Model — {profile.learner_id}", style="bold blue"))
+    console.print(f"\n[bold]Goals[/bold]: {', '.join(profile.goals) or '(none stated)'}")
+
+    if profile.strengths:
+        console.print("\n[bold]Strengths[/bold]")
+        for s in profile.strengths:
+            console.print(f"  • {s.strength} [dim](confidence {s.confidence:.2f})[/dim]")
+
+    if profile.growth_edges:
+        console.print("\n[bold]Growth edges[/bold]")
+        for g in profile.growth_edges:
+            console.print(f"  • {g.growth_edge} [dim](confidence {g.confidence:.2f})[/dim]")
+
+    if profile.uncertainties:
+        console.print("\n[bold]Open uncertainties[/bold]")
+        for u in profile.uncertainties:
+            console.print(f"  • {u.uncertainty}")
+
+    if profile.coach_beliefs:
+        console.print("\n[bold]Coach beliefs[/bold]")
+        for b in profile.coach_beliefs:
+            console.print(f"  • {b.belief} [dim](confidence {b.confidence:.2f})[/dim]")
+
+    if profile.learning_style:
+        console.print(f"\n[bold]Learning style[/bold]: {', '.join(profile.learning_style)}")
+    if profile.builder_patterns:
+        console.print(f"[bold]Builder patterns[/bold]: {', '.join(profile.builder_patterns)}")
+
+    console.print(f"\n[dim]Last updated: {profile.updated_at}[/dim]")
+    console.print()
+
+
+def _print_learner_assessment(assessment) -> None:
+    console.print()
+    console.print(Panel.fit("Coach Assessment", style="bold blue"))
+    console.print(f"\n[bold]Stage[/bold]: {assessment.current_stage}")
+    console.print(f"\n{assessment.coach_summary}")
+
+    if assessment.demonstrated_capabilities:
+        console.print("\n[bold]Demonstrated capabilities[/bold]")
+        for c in assessment.demonstrated_capabilities:
+            console.print(f"  • {c.capability} [dim](confidence {c.confidence:.2f})[/dim]")
+
+    if assessment.growth_gaps:
+        console.print("\n[bold]Growth gaps[/bold]")
+        for g in assessment.growth_gaps:
+            console.print(f"  • {g.gap} [dim](confidence {g.confidence:.2f})[/dim]")
+
+    if assessment.uncertainties:
+        console.print("\n[bold]Uncertainties[/bold]")
+        for u in assessment.uncertainties:
+            console.print(f"  • {u.uncertainty}")
+
+    if assessment.source == "deterministic_fallback":
+        console.print(f"\n[dim]Deterministic fallback — AI assessment unavailable this run ({assessment.fallback_reason}).[/dim]")
+    console.print()
+
+
+def _print_learner_recommendation(rec) -> None:
+    console.print()
+    console.print(Panel.fit("Next Challenge", style="bold blue"))
+    console.print(f"\n[bold]{rec.next_challenge}[/bold]")
+    console.print(f"\n[bold]Why[/bold]\n  {rec.why_this}")
+
+    if rec.build_spec.required_capabilities or rec.build_spec.suggested_artifacts:
+        console.print(f"\n[bold]Build[/bold]: {rec.build_spec.project_goal}")
+        if rec.build_spec.required_capabilities:
+            console.print(f"  Requires: {', '.join(rec.build_spec.required_capabilities)}")
+        if rec.build_spec.suggested_artifacts:
+            console.print(f"  Suggested artifacts: {', '.join(rec.build_spec.suggested_artifacts)}")
+
+    if rec.success_criteria:
+        console.print("\n[bold]Success criteria[/bold]")
+        for c in rec.success_criteria:
+            console.print(f"  • {c}")
+
+    if rec.evidence_compass_will_look_for:
+        console.print("\n[bold]Evidence Compass will look for[/bold]")
+        for e in rec.evidence_compass_will_look_for:
+            console.print(f"  • {e}")
+
+    if rec.source == "deterministic_fallback":
+        console.print(f"\n[dim]Deterministic fallback — AI recommendation unavailable this run ({rec.fallback_reason}).[/dim]")
+    console.print()
+
+
+@cli.group()
+def learner() -> None:
+    """Learner-centered coaching: a persistent learner model built from
+    accumulated evidence (repos, docs, blogs, reflections) — the learner is
+    the unit of analysis, not any single repository."""
+
+
+@learner.command(name="init")
+@click.argument("learner_id")
+@click.option("--goal", default=None, help="A learning goal for this learner.")
+def learner_init(learner_id: str, goal: str | None) -> None:
+    """Create (or add a goal to) a learner-coach profile."""
+    from .learner.coach import load_or_create_state
+    from .learner.store import save_coach_state
+
+    state = load_or_create_state(learner_id, goal)
+    save_coach_state(state)
+    console.print(f"[green]Learner-coach profile ready for [bold]{learner_id}[/bold].[/green]")
+    console.print(f"Goals: {state.profile.goals or '(none stated)'}")
+
+
+@learner.command(name="add-source")
+@click.argument("learner_id")
+@click.option("--github", "github_path", default=None, type=click.Path(exists=True, file_okay=False), help="Path to a local clone of a GitHub repo.")
+@click.option("--doc", "doc_path", default=None, type=click.Path(exists=True, dir_okay=False), help="Path to a project doc/writeup.")
+@click.option("--blog", "blog_path", default=None, type=click.Path(exists=True, dir_okay=False), help="Path to a blog post.")
+@click.option("--reflection", "reflection_path", default=None, type=click.Path(exists=True, dir_okay=False), help="Path to a reflection note.")
+def learner_add_source(
+    learner_id: str,
+    github_path: str | None,
+    doc_path: str | None,
+    blog_path: str | None,
+    reflection_path: str | None,
+) -> None:
+    """Add one evidence source to a learner's evidence bundle."""
+    from .learner.coach import load_or_create_state
+    from .learner.evidence import collect_doc_evidence, collect_repo_evidence
+    from .learner.store import save_coach_state
+
+    given = [p for p in (github_path, doc_path, blog_path, reflection_path) if p]
+    if len(given) != 1:
+        console.print("[red]Pass exactly one of --github, --doc, --blog, --reflection.[/red]")
+        sys.exit(1)
+
+    state = load_or_create_state(learner_id)
+    if github_path:
+        source = collect_repo_evidence(Path(github_path))
+    elif doc_path:
+        source = collect_doc_evidence(Path(doc_path), "doc")
+    elif blog_path:
+        source = collect_doc_evidence(Path(blog_path), "blog")
+    else:
+        source = collect_doc_evidence(Path(reflection_path), "reflection")
+
+    state.evidence_sources.append(source)
+    save_coach_state(state)
+    console.print(
+        f"[green]Added {source.source_type} source '{source.source_name}' "
+        f"— {len(source.items)} evidence item(s).[/green]"
+    )
+
+
+@learner.command(name="coach")
+@click.argument("learner_id")
+def learner_coach(learner_id: str) -> None:
+    """Run the coach loop: assess the learner, update the learner model, recommend the next challenge."""
+    from .learner.coach import run_coach
+
+    try:
+        state = run_coach(learner_id)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        sys.exit(1)
+
+    _print_learner_assessment(state.latest_assessment)
+    _print_learner_recommendation(state.latest_recommendation)
+
+
+@learner.command(name="show")
+@click.argument("learner_id")
+def learner_show(learner_id: str) -> None:
+    """Show the current learner-coach profile."""
+    from .learner.store import load_coach_state
+
+    state = load_coach_state(learner_id)
+    if state is None:
+        console.print(
+            f"[red]No learner-coach profile for [bold]{learner_id}[/bold]. "
+            "Run [bold]compass learner init[/bold] first.[/red]"
+        )
+        return
+
+    _print_learner_profile(state.profile)

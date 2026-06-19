@@ -12,6 +12,7 @@ import pytest
 from compass.agent import coach as coach_module
 from compass.cli import build_initial_skill_graph
 from compass.competency.assessor import apply_evidence
+from compass.learner import coach as learner_coach_module
 from compass.models import LearnerProfile, LearnerState, SkillEvidence
 
 
@@ -21,6 +22,9 @@ def no_real_llm_calls(monkeypatch):
     (forces the deterministic fallback path); individual tests override
     `compass.agent.coach._request_llm_choice` to simulate a specific response."""
     monkeypatch.setattr(coach_module, "_request_llm_choice", lambda prompt: None)
+    monkeypatch.setattr(learner_coach_module, "_request_llm_assessment", lambda prompt: None)
+    monkeypatch.setattr(learner_coach_module, "_request_llm_profile_update", lambda prompt: None)
+    monkeypatch.setattr(learner_coach_module, "_request_llm_recommendation", lambda prompt: None)
 
 
 def make_state(evidence_skill_ids: list[str], repo_name: str, background: str = "software_engineer") -> LearnerState:
