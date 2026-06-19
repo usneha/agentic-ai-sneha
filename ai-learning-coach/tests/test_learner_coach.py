@@ -64,6 +64,45 @@ def test_build_evidence_bundle_flattens_multiple_sources():
     assert len(bundle) == 2
 
 
+def test_select_evidence_for_coaching_caps_per_skill_bucket():
+    """5 matches for the same skill_id should not all survive selection —
+    storage (build_evidence_bundle) keeps all 5, but the bounded view used
+    for LLM prompts should cap to max_per_bucket, preferring strong evidence."""
+    items = [
+        EvidenceItem(source_id="r1", source_type="github_repo", summary=f"match {i}", metadata={"skill_id": "rag.hybrid", "level": "weak"})
+        for i in range(4)
+    ]
+    items.append(EvidenceItem(source_id="r1", source_type="github_repo", summary="strong match", metadata={"skill_id": "rag.hybrid", "level": "strong"}))
+    profile = LearnerCoachProfile(learner_id="t1")
+    state = LearnerCoachState(
+        profile=profile,
+        evidence_sources=[EvidenceSource(source_type="github_repo", source_name="r1", items=items)],
+    )
+
+    full = learner_coach.build_evidence_bundle(state)
+    capped = learner_coach.select_evidence_for_coaching(state, max_per_bucket=2)
+
+    assert len(full) == 5
+    assert len(capped) == 2
+    assert any(item.summary == "strong match" for item in capped)
+
+
+def test_select_evidence_for_coaching_buckets_non_skill_evidence_by_source():
+    items = [
+        EvidenceItem(source_id="reflection.md", source_type="reflection", summary=f"paragraph {i}")
+        for i in range(5)
+    ]
+    profile = LearnerCoachProfile(learner_id="t1")
+    state = LearnerCoachState(
+        profile=profile,
+        evidence_sources=[EvidenceSource(source_type="reflection", source_name="reflection.md", items=items)],
+    )
+
+    capped = learner_coach.select_evidence_for_coaching(state, max_per_bucket=2)
+
+    assert len(capped) == 2
+
+
 # ── Stage 1: assessment ───────────────────────────────────────────────────
 
 def test_assess_learner_valid_response_is_used(monkeypatch):

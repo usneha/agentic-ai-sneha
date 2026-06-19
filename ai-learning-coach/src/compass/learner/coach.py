@@ -306,7 +306,42 @@ def load_or_create_state(learner_id: str, goal: str | None = None) -> LearnerCoa
 
 
 def build_evidence_bundle(state: LearnerCoachState) -> list[EvidenceItem]:
+    """Every EvidenceItem ever collected, unfiltered — the full audit trail."""
     return [item for source in state.evidence_sources for item in source.items]
+
+
+_LEVEL_RANK = {"strong": 0, "moderate": 1, "weak": 2}
+
+
+def select_evidence_for_coaching(state: LearnerCoachState, max_per_bucket: int = 3) -> list[EvidenceItem]:
+    """Bounded view of state.evidence_sources for LLM prompts.
+
+    Storage stays unbounded — build_evidence_bundle() above still returns
+    every item ever collected. This only caps what gets shown to the model
+    on a given call, so a learner who scans many repos over a long time
+    doesn't silently blow the prompt budget or drown recent signal in
+    repetitive old matches. Evidence is grouped into buckets — by skill_id
+    where the scanner tagged one (repo evidence), otherwise by
+    (source_type, source_name) for free-text sources like docs/reflections
+    that aren't skill-tagged — and each bucket keeps at most
+    `max_per_bucket` items, preferring stronger evidence levels and more
+    recently-collected sources.
+    """
+    buckets: dict[tuple, list] = {}
+    for source in state.evidence_sources:
+        for item in source.items:
+            skill_id = item.metadata.get("skill_id")
+            bucket_key = ("skill", skill_id) if skill_id else ("source", source.source_type, source.source_name)
+            buckets.setdefault(bucket_key, []).append((item, source.collected_at))
+
+    selected: list[EvidenceItem] = []
+    for bucket_items in buckets.values():
+        ranked = sorted(
+            bucket_items,
+            key=lambda pair: (_LEVEL_RANK.get(pair[0].metadata.get("level"), 1), -pair[1].timestamp()),
+        )
+        selected.extend(item for item, _ in ranked[:max_per_bucket])
+    return selected
 
 
 def run_coach(learner_id: str) -> LearnerCoachState:
@@ -314,7 +349,7 @@ def run_coach(learner_id: str) -> LearnerCoachState:
     if state is None:
         raise ValueError(f"No learner-coach state found for '{learner_id}'. Run `compass learner init` first.")
 
-    evidence = build_evidence_bundle(state)
+    evidence = select_evidence_for_coaching(state)
     assessment = assess_learner(state.profile, evidence)
     updated_profile = update_profile(state.profile, evidence, assessment)
     recommendation = recommend_next_challenge(updated_profile, assessment, learner_id)
