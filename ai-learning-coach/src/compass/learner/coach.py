@@ -18,6 +18,7 @@ from .models import (
     BuildSpec,
     CapabilityClaim,
     CoachAssessment,
+    CoachingCycle,
     CoachingRecommendation,
     EvidenceItem,
     LearnerCoachProfile,
@@ -319,7 +320,10 @@ def run_coach(learner_id: str) -> LearnerCoachState:
     recommendation = recommend_next_challenge(updated_profile, assessment, learner_id)
 
     state.profile = updated_profile
-    state.latest_assessment = assessment
-    state.latest_recommendation = recommendation
+    state.history.append(CoachingCycle(
+        evidence_count=len(evidence),
+        assessment=assessment,
+        recommendation=recommendation,
+    ))
     save_coach_state(state)
     return state

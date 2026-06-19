@@ -131,10 +131,26 @@ class CoachingRecommendation(BaseModel):
     fallback_reason: Optional[str] = None
 
 
+# ── Episodic history ──────────────────────────────────────────────────────────
+
+class CoachingCycle(BaseModel):
+    """One full run of assess -> update_profile -> recommend. Cycles are
+    appended, never overwritten, so the coach can be asked what it believed
+    at any prior point, not just what it believes now."""
+    cycle_id: str = Field(default_factory=_uuid)
+    ran_at: datetime = Field(default_factory=_now)
+    evidence_count: int = 0
+    assessment: CoachAssessment
+    recommendation: CoachingRecommendation
+
+
 # ── Top-level persisted state ────────────────────────────────────────────────
 
 class LearnerCoachState(BaseModel):
     profile: LearnerCoachProfile
     evidence_sources: list[EvidenceSource] = Field(default_factory=list)
-    latest_assessment: Optional[CoachAssessment] = None
-    latest_recommendation: Optional[CoachingRecommendation] = None
+    history: list[CoachingCycle] = Field(default_factory=list)
+
+    @property
+    def latest_cycle(self) -> Optional[CoachingCycle]:
+        return self.history[-1] if self.history else None

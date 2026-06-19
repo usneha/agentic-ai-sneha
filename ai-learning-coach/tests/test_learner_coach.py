@@ -242,9 +242,28 @@ def test_run_coach_persists_state_across_runs(tmp_path, monkeypatch):
 
     result = learner_coach.run_coach("e2e-learner")
 
-    assert result.latest_assessment.source == "deterministic_fallback"
-    assert result.latest_recommendation.source == "deterministic_fallback"
+    assert result.latest_cycle.assessment.source == "deterministic_fallback"
+    assert result.latest_cycle.recommendation.source == "deterministic_fallback"
 
     reloaded = load_coach_state("e2e-learner")
-    assert reloaded.latest_assessment.source == "deterministic_fallback"
+    assert reloaded.latest_cycle.assessment.source == "deterministic_fallback"
     assert reloaded.profile.goals == ["Become strong at agentic AI systems"]
+
+
+def test_run_coach_appends_cycles_instead_of_overwriting(tmp_path, monkeypatch):
+    monkeypatch.setattr("compass.learner.store.LEARNERS_DIR", tmp_path)
+
+    state = learner_coach.load_or_create_state("episodic-learner")
+    state.evidence_sources.append(EvidenceSource(
+        source_type="reflection", source_name="r1",
+        items=[EvidenceItem(source_id="r1", source_type="reflection", summary="First reflection")],
+    ))
+    from compass.learner.store import save_coach_state
+    save_coach_state(state)
+
+    learner_coach.run_coach("episodic-learner")
+    second = learner_coach.run_coach("episodic-learner")
+
+    assert len(second.history) == 2
+    assert second.history[0].cycle_id != second.history[1].cycle_id
+    assert second.latest_cycle is second.history[-1]

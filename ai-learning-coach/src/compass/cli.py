@@ -2272,8 +2272,9 @@ def learner_coach(learner_id: str) -> None:
         console.print(f"[red]{exc}[/red]")
         sys.exit(1)
 
-    _print_learner_assessment(state.latest_assessment)
-    _print_learner_recommendation(state.latest_recommendation)
+    cycle = state.latest_cycle
+    _print_learner_assessment(cycle.assessment)
+    _print_learner_recommendation(cycle.recommendation)
 
 
 @learner.command(name="show")
@@ -2291,3 +2292,42 @@ def learner_show(learner_id: str) -> None:
         return
 
     _print_learner_profile(state.profile)
+
+
+@learner.command(name="history")
+@click.argument("learner_id")
+@click.option("--cycle", "cycle_index", default=None, type=int, help="Show one cycle in full (1-based, as listed).")
+def learner_history(learner_id: str, cycle_index: int | None) -> None:
+    """List past coaching cycles, or show one in full with --cycle."""
+    from .learner.store import load_coach_state
+
+    state = load_coach_state(learner_id)
+    if state is None:
+        console.print(
+            f"[red]No learner-coach profile for [bold]{learner_id}[/bold]. "
+            "Run [bold]compass learner init[/bold] first.[/red]"
+        )
+        return
+    if not state.history:
+        console.print(f"[yellow]No coaching cycles yet for [bold]{learner_id}[/bold]. Run [bold]compass learner coach[/bold] first.[/yellow]")
+        return
+
+    if cycle_index is not None:
+        if not 1 <= cycle_index <= len(state.history):
+            console.print(f"[red]Cycle {cycle_index} out of range (1-{len(state.history)}).[/red]")
+            return
+        cycle = state.history[cycle_index - 1]
+        _print_learner_assessment(cycle.assessment)
+        _print_learner_recommendation(cycle.recommendation)
+        return
+
+    console.print()
+    console.print(Panel.fit(f"Coaching History — {learner_id}", style="bold blue"))
+    for i, cycle in enumerate(state.history, start=1):
+        source_tag = "[dim](fallback)[/dim]" if cycle.assessment.source == "deterministic_fallback" else ""
+        console.print(
+            f"\n[bold]{i}.[/bold] {cycle.ran_at:%Y-%m-%d %H:%M} {source_tag}\n"
+            f"   Stage: {cycle.assessment.current_stage}\n"
+            f"   Next challenge: {cycle.recommendation.next_challenge}"
+        )
+    console.print(f"\n[dim]Use --cycle <n> to see one in full.[/dim]\n")
