@@ -1,4 +1,5 @@
 import operator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, List, TypedDict
 
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -50,16 +51,29 @@ def discovery_node(state: ResearchState) -> dict:
     structured_llm = _llm().with_structured_output(CompetitorList)
     chain = DISCOVERY_PROMPT | structured_llm
     result: CompetitorList = chain.invoke({"company": state["company"], "raw_data": raw_data})
-    return {"competitor_queue": result.competitors[:3]}
+    competitors = [
+        c for c in result.competitors if c.strip().lower() != state["company"].strip().lower()
+    ]
+    return {"competitor_queue": competitors[:3]}
 
 
 def researcher_node(state: ResearchState) -> dict:
     queue = list(state["competitor_queue"])
     competitor = queue.pop(0)
-    raw_data = web_search.invoke(
-        f"{competitor} software pricing features, news, "
-        f"market positioning vs {state['company']}"
-    )
+    company = state["company"]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        overview_future = executor.submit(
+            web_search.invoke,
+            f"{competitor} software pricing features market positioning vs {company}",
+        )
+        news_future = executor.submit(
+            web_search.invoke, f"{competitor} vs {company} news announcement 2026"
+        )
+        overview_data = overview_future.result()
+        news_data = news_future.result()
+
+    raw_data = f"{overview_data}\n\n--- NEWS ---\n{news_data}"
     return {
         "competitor_queue": queue,
         "current_target": competitor,
