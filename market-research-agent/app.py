@@ -33,16 +33,105 @@ if st.button("Run Research Pipeline"):
         status.update(label="Research complete", state="complete")
 
     for report in result["final_reports"]:
-        with st.expander(f"📦 {report['competitor_name']}"):
+        competitor_name = report["competitor_name"]
+        with st.expander(f"📦 {competitor_name}"):
+            st.markdown("### Executive Summary")
+            st.write(report["executive_summary"])
+
+            st.markdown("### Source Quality")
+            if report["sources"]:
+                st.dataframe(
+                    [
+                        {
+                            "Title": s["title"],
+                            "Type": s["source_type"],
+                            "Favors": s["favors"],
+                            "Evidence": s["evidence_quality"],
+                            "Bias Risk": s["bias_risk"],
+                            "Insight": s["insight"],
+                        }
+                        for s in report["sources"]
+                    ],
+                    use_container_width=True,
+                )
+            else:
+                st.write("No sources captured.")
+
+            st.markdown("### Positioning")
+            pos = report["positioning"]
             left, right = st.columns(2)
             with left:
-                st.markdown("**Pricing Model**")
-                st.write(report["pricing_model"])
-                st.markdown("**Market Positioning**")
-                st.write(report["market_positioning"])
+                st.markdown(f"**{company_name}**")
+                st.write(f"Problem solved: {pos['company_problem_solved']}")
+                st.write(f"Promise: {pos['company_promise']}")
+                st.write(f"Segment: {pos['company_segment']}")
             with right:
-                st.markdown("**Core Features**")
-                for feature in report["core_features"]:
-                    st.markdown(f"- {feature}")
-                st.markdown("**Recent News**")
-                st.write(report["recent_news"])
+                st.markdown(f"**{competitor_name}**")
+                st.write(f"Problem solved: {pos['competitor_problem_solved']}")
+                st.write(f"Promise: {pos['competitor_promise']}")
+                st.write(f"Segment: {pos['competitor_segment']}")
+            st.caption(pos["positioning_difference"])
+
+            st.markdown("### Feature Comparison")
+            if report["feature_comparison"]:
+                st.dataframe(
+                    [
+                        {
+                            "Dimension": f["dimension"],
+                            company_name: f["company_value"],
+                            competitor_name: f["competitor_value"],
+                            "PM Interpretation": f["pm_interpretation"],
+                        }
+                        for f in report["feature_comparison"]
+                    ],
+                    use_container_width=True,
+                )
+
+            st.markdown("### Customer Perception")
+            perception = report["customer_perception"]
+            left, right = st.columns(2)
+            with left:
+                st.markdown(f"**{company_name} praise**")
+                for item in perception["company_praise"]:
+                    st.markdown(f"- {item}")
+                st.markdown(f"**{company_name} complaints**")
+                for item in perception["company_complaints"]:
+                    st.markdown(f"- {item}")
+            with right:
+                st.markdown(f"**{competitor_name} praise**")
+                for item in perception["competitor_praise"]:
+                    st.markdown(f"- {item}")
+                st.markdown(f"**{competitor_name} complaints**")
+                for item in perception["competitor_complaints"]:
+                    st.markdown(f"- {item}")
+
+            st.markdown("### Pricing / Packaging")
+            pricing = report["pricing"]
+            st.write(pricing["summary"])
+            st.write(pricing["packaging_notes"])
+            st.write(pricing["pricing_complaints"])
+
+            st.markdown("### Strategic Read")
+            strategic = report["strategic_read"]
+            st.write(f"Competitor's market belief: {strategic['competitor_market_belief']}")
+            st.write(f"Expectation being shaped: {strategic['expectation_being_shaped']}")
+            st.write(f"{company_name} vulnerability: {strategic['company_vulnerability']}")
+            st.write(f"{company_name} advantage: {strategic['company_advantage']}")
+            st.write(f"Watch (6-12 months): {strategic['watch_next_6_12_months']}")
+
+            st.markdown("### PM Recommendations")
+            recs = report["recommendations"]
+            for label, key in [
+                ("Do now", "do_now"),
+                ("Do not blindly copy", "do_not_blindly_copy"),
+                ("Watch", "watch"),
+            ]:
+                st.markdown(f"**{label}**")
+                for rec in recs[key]:
+                    st.markdown(
+                        f"- {rec['action']} (confidence: {rec['confidence']}) — {rec['rationale']}"
+                    )
+
+            st.markdown("### Open Questions")
+            for question in report["open_questions"]:
+                st.markdown(f"- {question}")

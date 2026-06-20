@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, List, TypedDict
 
 from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -10,6 +11,15 @@ from langgraph.graph import END, START, StateGraph
 from models import CompetitorList, CompetitorReport
 
 web_search = DuckDuckGoSearchRun()
+deep_search = DuckDuckGoSearchAPIWrapper(max_results=4)
+
+RESEARCH_QUERIES = [
+    ("Direct comparison", "{competitor} vs {company}"),
+    ("Alternatives", "{competitor} alternatives {company}"),
+    ("Switching language", "why switch from {company} to {competitor}"),
+    ("Customer complaints", "{competitor} customer complaints"),
+    ("Recent news", "{competitor} vs {company} news announcement 2026"),
+]
 
 DISCOVERY_PROMPT = ChatPromptTemplate.from_messages([
     ("system", "You are a market research analyst."),
@@ -24,9 +34,18 @@ DISCOVERY_PROMPT = ChatPromptTemplate.from_messages([
 ANALYST_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
-        "You are an elite market analyst comparing {competitor} against {company}. "
-        "Do not hallucinate; write 'Data not found' for any field you cannot "
-        "support from the search results below.",
+        "You are a market research agent for a product manager, researching how "
+        "{company} compares against {competitor}. Produce grounded, decision-useful "
+        "competitor intelligence, not a generic company overview: what customers are "
+        "comparing, why they choose one over the other, where each is perceived as "
+        "stronger or weaker, and the strategic implications for {company}.\n\n"
+        "Separate observed evidence from your own interpretation. For each source you "
+        "cite, judge its evidence quality and bias risk; do not treat vendor pages or "
+        "affiliate/SEO comparison fluff as neutral evidence, and do not present "
+        "competitor marketing claims as objective truth. If sources disagree, say so. "
+        "Do not hallucinate; write 'Not found' for any field unsupported by the search "
+        "results below. Be concise: every field has a maximum length or list size noted "
+        "in its schema description, and you must stay within those limits.",
     ),
     ("human", "Search results:\n{raw_data}"),
 ])
@@ -40,8 +59,19 @@ class ResearchState(TypedDict):
     final_reports: Annotated[List[dict], operator.add]
 
 
-def _llm() -> ChatOpenAI:
-    return ChatOpenAI(model="gpt-4o-mini", temperature=0)
+def _llm(model: str = "gpt-4o-mini") -> ChatOpenAI:
+    return ChatOpenAI(model=model, temperature=0)
+
+
+def _format_results(label: str, results: list) -> str:
+    lines = [f"--- {label} ---"]
+    for r in results:
+        lines.append(
+            f"Title: {r.get('title', 'Untitled')}\n"
+            f"URL: {r.get('link', 'Not found')}\n"
+            f"Snippet: {r.get('snippet', '')}"
+        )
+    return "\n".join(lines)
 
 
 def discovery_node(state: ResearchState) -> dict:
@@ -62,18 +92,18 @@ def researcher_node(state: ResearchState) -> dict:
     competitor = queue.pop(0)
     company = state["company"]
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        overview_future = executor.submit(
-            web_search.invoke,
-            f"{competitor} software pricing features market positioning vs {company}",
-        )
-        news_future = executor.submit(
-            web_search.invoke, f"{competitor} vs {company} news announcement 2026"
-        )
-        overview_data = overview_future.result()
-        news_data = news_future.result()
+    with ThreadPoolExecutor(max_workers=len(RESEARCH_QUERIES)) as executor:
+        futures = {
+            label: executor.submit(
+                deep_search.results,
+                template.format(competitor=competitor, company=company),
+                4,
+            )
+            for label, template in RESEARCH_QUERIES
+        }
+        sections = [_format_results(label, future.result()) for label, future in futures.items()]
 
-    raw_data = f"{overview_data}\n\n--- NEWS ---\n{news_data}"
+    raw_data = "\n\n".join(sections)
     return {
         "competitor_queue": queue,
         "current_target": competitor,
@@ -82,7 +112,7 @@ def researcher_node(state: ResearchState) -> dict:
 
 
 def analyst_node(state: ResearchState) -> dict:
-    structured_llm = _llm().with_structured_output(CompetitorReport)
+    structured_llm = _llm("gpt-4.1-mini").with_structured_output(CompetitorReport)
     chain = ANALYST_PROMPT | structured_llm
     report: CompetitorReport = chain.invoke({
         "competitor": state["current_target"],
