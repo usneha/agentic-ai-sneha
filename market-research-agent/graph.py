@@ -50,6 +50,20 @@ ANALYST_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Search results:\n{raw_data}"),
 ])
 
+SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a market research agent for a product manager. You have already "
+        "researched how {company} compares against {count} competitors. Write a "
+        "single executive summary (3-5 sentences) synthesizing the overall "
+        "competitive landscape: the clearest pattern across competitors, where "
+        "{company} is consistently stronger or weaker, what customers seem to value "
+        "most in this category, and the biggest strategic implication for a PM. "
+        "Do not just repeat each competitor's summary one by one; synthesize.",
+    ),
+    ("human", "Per-competitor findings:\n{competitor_summaries}"),
+])
+
 
 class ResearchState(TypedDict):
     company: str
@@ -57,6 +71,7 @@ class ResearchState(TypedDict):
     current_target: str
     raw_data: str
     final_reports: Annotated[List[dict], operator.add]
+    overall_summary: str
 
 
 def _llm(model: str = "gpt-4o-mini") -> ChatOpenAI:
@@ -122,9 +137,24 @@ def analyst_node(state: ResearchState) -> dict:
     return {"final_reports": [report.model_dump()]}
 
 
+def summary_node(state: ResearchState) -> dict:
+    competitor_summaries = "\n\n".join(
+        f"{r['competitor_name']}: {r['executive_summary']} "
+        f"(Pricing: {r['pricing']['summary']})"
+        for r in state["final_reports"]
+    )
+    chain = SUMMARY_PROMPT | _llm("gpt-4.1-mini")
+    response = chain.invoke({
+        "company": state["company"],
+        "count": len(state["final_reports"]),
+        "competitor_summaries": competitor_summaries,
+    })
+    return {"overall_summary": response.content}
+
+
 def queue_router(state: ResearchState):
     if len(state["competitor_queue"]) == 0:
-        return END
+        return "Summary"
     return "Researcher"
 
 
@@ -133,10 +163,12 @@ def build_graph():
     graph.add_node("Discovery", discovery_node)
     graph.add_node("Researcher", researcher_node)
     graph.add_node("Analyst", analyst_node)
+    graph.add_node("Summary", summary_node)
 
     graph.add_edge(START, "Discovery")
     graph.add_edge("Discovery", "Researcher")
     graph.add_edge("Researcher", "Analyst")
     graph.add_conditional_edges("Analyst", queue_router)
+    graph.add_edge("Summary", END)
 
     return graph.compile()
