@@ -1,14 +1,38 @@
+import io
 import os
 
 import streamlit as st
 from dotenv import load_dotenv
+from pptx import Presentation
 
+import gamma_export
 from graph import build_graph
 
 load_dotenv()
 
-st.set_page_config(page_title="Market Research Agent", layout="wide")
-st.title("Market Research Agent")
+st.set_page_config(page_title="PitchSnitch", page_icon="🕵️", layout="wide")
+
+st.title("🕵️ PitchSnitch")
+st.subheader("From One Word to a McKinsey-Style Strategy Deck")
+st.markdown(
+    "Type a brand or product name. Get auto-discovered competitors, evidence-graded "
+    "research, and an executive-ready strategy deck with a clear recommendation — "
+    "in one run."
+)
+
+step_columns = st.columns(4)
+pipeline_steps = [
+    ("🔍", "Discover", "Finds 3 real competitors via live web search"),
+    ("📊", "Research", "5 targeted searches per competitor, source-cited"),
+    ("🧠", "Analyze", "PM-grade report: positioning, pricing, perception, risk"),
+    ("📑", "Strategize", "McKinsey-style deck with a clear recommendation"),
+]
+for column, (icon, label, description) in zip(step_columns, pipeline_steps):
+    with column:
+        st.markdown(f"**{icon} {label}**")
+        st.caption(description)
+
+st.divider()
 
 
 def render_full_report(report: dict, company_name: str) -> None:
@@ -202,7 +226,101 @@ def report_to_markdown(report: dict, company_name: str) -> str:
     return "\n".join(lines)
 
 
-company_name = st.text_input("Company / Product Name")
+def render_deck(deck: dict) -> None:
+    st.write(deck["narrative_spine"])
+
+    for slide in deck["slides"]:
+        with st.expander(f"Slide {slide['slide_number']}: {slide['title']}"):
+            st.markdown(f"**Objective:** {slide['objective']}")
+            st.markdown(f"**Main message:** {slide['main_message']}")
+            st.markdown(f"**Recommended visual:** {slide['recommended_visual']}")
+            st.markdown("**Slide content:**")
+            st.markdown(slide["slide_content"])
+            st.markdown(f"**Evidence to cite:** {slide['evidence_to_cite']}")
+            st.caption(f"Speaker notes: {slide['speaker_notes']}")
+
+    st.markdown("##### Final Recommendation")
+    roadmap = deck["final_recommendation"]
+    for label, key in [
+        ("Do now", "do_now"),
+        ("Do not blindly copy", "do_not_blindly_copy"),
+        ("Watch", "watch"),
+    ]:
+        st.markdown(f"**{label}**")
+        for action in roadmap[key]:
+            st.markdown(
+                f"- {action['action']} (owner: {action['owner_type']}, "
+                f"confidence: {action['confidence']}, evidence: "
+                f"{action['evidence_quality']}) — {action['rationale']}"
+            )
+
+    st.markdown("##### Evidence Caveats")
+    st.write(deck["evidence_caveats"])
+
+
+def _add_bullet_slide(prs: Presentation, title: str, bullets: list, body_text: str = "") -> None:
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = title
+    body = slide.placeholders[1].text_frame
+    body.word_wrap = True
+    first = True
+    if body_text:
+        body.text = body_text
+        first = False
+    for bullet in bullets:
+        if first:
+            body.text = bullet
+            first = False
+        else:
+            p = body.add_paragraph()
+            p.text = bullet
+            p.level = 1
+    return slide
+
+
+def deck_to_pptx(deck: dict, company_name: str) -> bytes:
+    prs = Presentation()
+
+    title_slide = prs.slides.add_slide(prs.slide_layouts[0])
+    title_slide.shapes.title.text = deck["deck_title"]
+    title_slide.placeholders[1].text = f"Competitive Strategy Deck — {company_name}"
+
+    _add_bullet_slide(prs, "Narrative Spine", [], body_text=deck["narrative_spine"])
+
+    for slide_data in deck["slides"]:
+        bullets = [line.strip("-* ").strip() for line in slide_data["slide_content"].split("\n") if line.strip()]
+        bullets.append(f"Evidence: {slide_data['evidence_to_cite']}")
+        slide = _add_bullet_slide(
+            prs,
+            f"{slide_data['slide_number']}. {slide_data['title']}",
+            bullets,
+            body_text=slide_data["main_message"],
+        )
+        slide.notes_slide.notes_text_frame.text = slide_data["speaker_notes"]
+
+    roadmap = deck["final_recommendation"]
+    for label, key in [
+        ("Recommendation: Do Now", "do_now"),
+        ("Recommendation: Do Not Blindly Copy", "do_not_blindly_copy"),
+        ("Recommendation: Watch", "watch"),
+    ]:
+        bullets = [
+            f"{a['action']} (Owner: {a['owner_type']}, Confidence: {a['confidence']}, "
+            f"Evidence: {a['evidence_quality']}) — {a['rationale']}"
+            for a in roadmap[key]
+        ]
+        _add_bullet_slide(prs, label, bullets)
+
+    _add_bullet_slide(prs, "Evidence Caveats", [], body_text=deck["evidence_caveats"])
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+company_name = st.text_input(
+    "Company / Product Name", placeholder="e.g. Notion, Figma, TurboTax..."
+)
 
 if st.button("Run Research Pipeline"):
     if not os.environ.get("OPENAI_API_KEY"):
@@ -226,6 +344,9 @@ if st.button("Run Research Pipeline"):
 
     st.session_state["result"] = result
     st.session_state["company_name"] = company_name
+    st.session_state.pop("gamma_result", None)
+    st.session_state.pop("gamma_pptx_bytes", None)
+    st.session_state.pop("gamma_error", None)
 
 if "result" in st.session_state:
     result = st.session_state["result"]
@@ -258,3 +379,93 @@ if "result" in st.session_state:
 
                 with st.expander("Full report"):
                     render_full_report(report, company_name)
+
+    st.markdown("### Strategy Deck")
+    deck_pptx = deck_to_pptx(result["deck"], company_name)
+    st.download_button(
+        label="Download Strategy Deck (.pptx)",
+        data=deck_pptx,
+        file_name=f"{company_name.replace(' ', '_')}_strategy_deck.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+    st.markdown("##### Designer-Quality Deck (Gamma)")
+    st.caption("Uses your Gamma credits, separate from the .pptx export above.")
+
+    if st.button("Generate Designer Deck with Gamma"):
+        gamma_key = os.environ.get("GAMMA_API_KEY")
+        if not gamma_key:
+            st.error("GAMMA_API_KEY is not set. Add it to your .env file.")
+            st.stop()
+
+        st.session_state.pop("gamma_result", None)
+        st.session_state.pop("gamma_pptx_bytes", None)
+        st.session_state.pop("gamma_error", None)
+
+        try:
+            input_text = gamma_export.build_input_text(result["deck"], company_name)
+            instructions = gamma_export.build_additional_instructions(result["deck"])
+            with st.status("Generating deck with Gamma...", expanded=True) as gamma_status:
+                st.write("Submitting content to Gamma...")
+                generation_id, warnings = gamma_export.create_generation(
+                    input_text, gamma_key, instructions
+                )
+                if warnings:
+                    st.write(f"Gamma warnings: {warnings}")
+                st.write(f"Generation started (id: {generation_id}). Polling for completion...")
+                progress_line = st.empty()
+                gamma_data = gamma_export.poll_generation(
+                    generation_id, gamma_key, on_progress=progress_line.write
+                )
+                progress_line.empty()
+                st.write("Downloading export from Gamma...")
+                pptx_bytes = gamma_export.download_export(gamma_data["exportUrl"])
+                gamma_status.update(label="Gamma deck ready", state="complete")
+            st.session_state["gamma_result"] = gamma_data
+            st.session_state["gamma_pptx_bytes"] = pptx_bytes
+        except gamma_export.GammaAPIError as e:
+            st.session_state["gamma_error"] = {"status_code": e.status_code, "message": str(e)}
+        except gamma_export.GammaGenerationFailedError as e:
+            st.session_state["gamma_error"] = {
+                "status_code": None,
+                "message": f"Gamma generation failed: {e}",
+            }
+        except gamma_export.GammaTimeoutError as e:
+            st.session_state["gamma_error"] = {
+                "status_code": None,
+                "message": f"Timed out waiting for Gamma: {e}",
+            }
+
+    if "gamma_error" in st.session_state:
+        err = st.session_state["gamma_error"]
+        code = err["status_code"]
+        if code == 401:
+            st.error(
+                "Gamma rejected the API key (401). Check GAMMA_API_KEY and that the "
+                "workspace plan supports the API."
+            )
+        elif code == 429:
+            st.warning("Gamma rate limit hit (429). Wait a bit and try again.")
+        elif code is None:
+            st.error(f"Could not complete the Gamma request: {err['message']}")
+        else:
+            st.error(f"Gamma API error ({code}): {err['message']}")
+
+    if "gamma_result" in st.session_state:
+        gamma_data = st.session_state["gamma_result"]
+        st.success("Designer deck ready.")
+        st.link_button("Open in Gamma", gamma_data["gammaUrl"])
+        st.download_button(
+            label="Download Designer Deck (.pptx)",
+            data=st.session_state["gamma_pptx_bytes"],
+            file_name=f"{company_name.replace(' ', '_')}_gamma_deck.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
+        credits = gamma_data.get("credits", {})
+        st.caption(
+            f"Credits used: {credits.get('deducted', '?')} — "
+            f"remaining: {credits.get('remaining', '?')}"
+        )
+
+    st.markdown(f"#### {result['deck']['deck_title']}")
+    render_deck(result["deck"])

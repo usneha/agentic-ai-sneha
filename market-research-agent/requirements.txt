@@ -6,3 +6,5 @@ ddgs
 pydantic
 streamlit
 python-dotenv
+python-pptx
+requests

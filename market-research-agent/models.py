@@ -105,3 +105,60 @@ class CompetitorReport(BaseModel):
         description=f"At most 4 items: missing evidence and questions for customer "
         f"research, sales/support, or product analytics. {PHRASE} each."
     )
+
+
+class RoadmapAction(BaseModel):
+    action: str = Field(description=PHRASE)
+    rationale: str = Field(description=SENTENCE)
+    owner_type: str = Field(
+        description="e.g. PM, Design, Research, Data Science, Engineering, Marketing, Sales"
+    )
+    confidence: str = Field(description="High, Medium, or Low")
+    evidence_quality: str = Field(description="High, Medium, or Low")
+
+
+class Roadmap(BaseModel):
+    do_now: List[RoadmapAction] = Field(description="At most 3 items")
+    do_not_blindly_copy: List[RoadmapAction] = Field(description="At most 3 items")
+    watch: List[RoadmapAction] = Field(description="At most 3 items")
+
+
+class Slide(BaseModel):
+    slide_number: int
+    title: str = Field(
+        description="Insight-driven, full-sentence title, not a topic label. "
+        f"{PHRASE}"
+    )
+    objective: str = Field(
+        description=f"What decision or understanding this slide supports. {SENTENCE}"
+    )
+    main_message: str = Field(description="2-4 sentences explaining the slide's argument")
+    recommended_visual: str = Field(
+        description="One of: 2x2 matrix, comparison table, journey map, bar chart, "
+        "heatmap, strategic options table, positioning map, funnel/flow diagram, "
+        "source-quality table, recommendation roadmap, text-only executive summary"
+    )
+    slide_content: str = Field(
+        description="Markdown bullets or a markdown table, concise and "
+        "presentation-ready. Max ~150 words."
+    )
+    evidence_to_cite: str = Field(
+        description="Specific evidence from the input, with source names/URLs if "
+        f"present, and an evidence quality label (High/Medium/Low). {SENTENCE}"
+    )
+    speaker_notes: str = Field(
+        description=f"How a PM should talk through this slide. {SENTENCE}"
+    )
+
+
+class SlideDeck(BaseModel):
+    deck_title: str
+    narrative_spine: str = Field(
+        description="5-7 sentences summarizing the strategic story the deck tells"
+    )
+    slides: List[Slide] = Field(description="8 to 12 slides")
+    final_recommendation: Roadmap
+    evidence_caveats: str = Field(
+        description="Where the analysis is strong, weak, biased, outdated, or "
+        "incomplete. Max 4 sentences."
+    )

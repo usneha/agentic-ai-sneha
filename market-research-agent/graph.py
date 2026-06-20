@@ -8,7 +8,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
-from models import CompetitorList, CompetitorReport
+from models import CompetitorList, CompetitorReport, SlideDeck
 
 web_search = DuckDuckGoSearchRun()
 deep_search = DuckDuckGoSearchAPIWrapper(max_results=4)
@@ -64,6 +64,41 @@ SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Per-competitor findings:\n{competitor_summaries}"),
 ])
 
+DECK_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a strategy consultant and product strategy advisor creating a "
+        "McKinsey-style executive slide deck from a completed competitive analysis "
+        "comparing {company} against its competitive set in this category. Your "
+        "goal is not to summarize every finding; it is a clear strategic narrative "
+        "that helps leaders decide where competitors are winning, where {company} "
+        "is vulnerable, where it has a right to win, what to do now, what not to "
+        "blindly copy, and what to monitor.\n\n"
+        "McKinsey style: one slide makes one argument; slide titles are full-"
+        "sentence insights, not topic labels (bad: 'Feature Comparison'; good: "
+        "'Competitors are winning on ease of adoption, but depth remains limited'); "
+        "every slide answers 'so what'; use evidence, not generic claims; separate "
+        "fact from interpretation; avoid clutter, marketing language, and "
+        "unsupported recommendations. Since there are multiple competitors, slides "
+        "that would normally compare two products (positioning, product/experience, "
+        "vulnerabilities, differentiation) should synthesize across the whole "
+        "competitive set, not pick just one rival.\n\n"
+        "Produce 8 to 12 slides following this default storyline unless the input "
+        "strongly suggests otherwise: (1) executive takeaway, (2) market context "
+        "and customer job, (3) positioning comparison across the set, (4) customer "
+        "decision drivers, (5) product/experience comparison, (6) competitive "
+        "vulnerabilities, (7) differentiation opportunities, (8) strategic options "
+        "(2-4 options as a table: description, customer impact, business impact, "
+        "effort, risk, evidence strength, when it applies), (9) recommendation, "
+        "(10) roadmap (do now / do not blindly copy / watch), (11) risks and "
+        "unknowns, (12) appendix: source quality. Slide titles read together "
+        "should form one storyline.\n\n"
+        "Do not invent facts; use only the competitive analysis provided below. If "
+        "evidence is weak, say so explicitly rather than overstating confidence.",
+    ),
+    ("human", "Competitive analysis:\n{competitive_analysis}"),
+])
+
 
 class ResearchState(TypedDict):
     company: str
@@ -72,6 +107,7 @@ class ResearchState(TypedDict):
     raw_data: str
     final_reports: Annotated[List[dict], operator.add]
     overall_summary: str
+    deck: dict
 
 
 def _llm(model: str = "gpt-4o-mini") -> ChatOpenAI:
@@ -152,6 +188,64 @@ def summary_node(state: ResearchState) -> dict:
     return {"overall_summary": response.content}
 
 
+def _format_competitive_analysis(company: str, overall_summary: str, reports: list) -> str:
+    sections = [f"Company: {company}", f"Overall executive summary: {overall_summary}"]
+    for r in reports:
+        pos = r["positioning"]
+        perception = r["customer_perception"]
+        pricing = r["pricing"]
+        strategic = r["strategic_read"]
+        sections.append(
+            f"\n--- Competitor: {r['competitor_name']} ---\n"
+            f"Executive summary: {r['executive_summary']}\n"
+            f"Sources: "
+            + "; ".join(
+                f"{s['title']} ({s['url']}, evidence={s['evidence_quality']}, "
+                f"bias={s['bias_risk']}, favors={s['favors']}): {s['insight']}"
+                for s in r["sources"]
+            )
+            + f"\nPositioning - {company}: {pos['company_problem_solved']} / "
+            f"{pos['company_promise']} / {pos['company_segment']}\n"
+            f"Positioning - {r['competitor_name']}: {pos['competitor_problem_solved']} / "
+            f"{pos['competitor_promise']} / {pos['competitor_segment']}\n"
+            f"Positioning difference: {pos['positioning_difference']}\n"
+            f"Feature comparison: "
+            + "; ".join(
+                f"{f['dimension']}: {company}={f['company_value']} vs "
+                f"{r['competitor_name']}={f['competitor_value']} ({f['pm_interpretation']})"
+                for f in r["feature_comparison"]
+            )
+            + f"\nCustomer praise ({company}): {'; '.join(perception['company_praise'])}\n"
+            f"Customer complaints ({company}): {'; '.join(perception['company_complaints'])}\n"
+            f"Customer praise ({r['competitor_name']}): "
+            f"{'; '.join(perception['competitor_praise'])}\n"
+            f"Customer complaints ({r['competitor_name']}): "
+            f"{'; '.join(perception['competitor_complaints'])}\n"
+            f"Pricing: {pricing['summary']} | {pricing['packaging_notes']} | "
+            f"{pricing['pricing_complaints']}\n"
+            f"Strategic read: belief={strategic['competitor_market_belief']}; "
+            f"expectation={strategic['expectation_being_shaped']}; "
+            f"vulnerability={strategic['company_vulnerability']}; "
+            f"advantage={strategic['company_advantage']}; "
+            f"watch={strategic['watch_next_6_12_months']}\n"
+            f"Open questions: {'; '.join(r['open_questions'])}"
+        )
+    return "\n".join(sections)
+
+
+def deck_node(state: ResearchState) -> dict:
+    competitive_analysis = _format_competitive_analysis(
+        state["company"], state["overall_summary"], state["final_reports"]
+    )
+    structured_llm = _llm("gpt-4.1-mini").with_structured_output(SlideDeck)
+    chain = DECK_PROMPT | structured_llm
+    deck: SlideDeck = chain.invoke({
+        "company": state["company"],
+        "competitive_analysis": competitive_analysis,
+    })
+    return {"deck": deck.model_dump()}
+
+
 def queue_router(state: ResearchState):
     if len(state["competitor_queue"]) == 0:
         return "Summary"
@@ -164,11 +258,13 @@ def build_graph():
     graph.add_node("Researcher", researcher_node)
     graph.add_node("Analyst", analyst_node)
     graph.add_node("Summary", summary_node)
+    graph.add_node("Deck", deck_node)
 
     graph.add_edge(START, "Discovery")
     graph.add_edge("Discovery", "Researcher")
     graph.add_edge("Researcher", "Analyst")
     graph.add_conditional_edges("Analyst", queue_router)
-    graph.add_edge("Summary", END)
+    graph.add_edge("Summary", "Deck")
+    graph.add_edge("Deck", END)
 
     return graph.compile()
