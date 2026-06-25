@@ -226,6 +226,15 @@ Required env vars (`.env`):
   Deck with Gamma" button; requires a Gamma Pro/Ultra/Team/Business plan
   (no free tier).
 
+Optional env vars (`.env`):
+- `LANGCHAIN_TRACING_V2=true`, `LANGCHAIN_API_KEY`, `LANGCHAIN_PROJECT` —
+  enables [LangSmith](https://smith.langchain.com) tracing of every graph
+  run. No code changes are needed: `ChatOpenAI` calls and the `StateGraph`
+  pick these up automatically, so each run shows up in LangSmith as one
+  trace with a child span per node (Discovery, Researcher × N, Analyst × N,
+  Summary, Deck), including prompts, structured-output schemas, and token
+  usage. Leave `LANGCHAIN_API_KEY` unset to disable tracing entirely.
+
 No API key is needed for search — Discovery/Researcher use DuckDuckGo via
 `ddgs`, which is free and unauthenticated.
 
